@@ -214,6 +214,7 @@ def build_sheet_schema(columns):
     return {
         "type": "object",
         "additionalProperties": False,
+        "required": list(columns),
         "properties": {key: {"type": field_types} for key in columns},
     }
 
@@ -221,6 +222,7 @@ SHEET_SCHEMAS = {
     sheet_key: build_sheet_schema((cfg.get("columns") or {}).keys())
     for sheet_key, cfg in (EXCEL_MAP.get("sheets") or {}).items()
 }
+SCALAR_TYPES = ["string", "number", "integer", "boolean", "null"]
 DRIVER_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -277,7 +279,7 @@ DRIVER_SCHEMA = {
                 "required": ["path", "value", "evidence", "is_critical"],
                 "properties": {
                     "path": {"type": "string"},
-                    "value": {},
+                    "value": {"type": SCALAR_TYPES},
                     "evidence": {"type": "string"},
                     "is_critical": {"type": "boolean"},
                 },
@@ -305,8 +307,8 @@ VERIFIER_SCHEMA = {
                     "path": {"type": "string"},
                     "is_critical": {"type": "boolean"},
                     "status": {"type": "string", "enum": ["AGREE", "DISAGREE", "UNSURE"]},
-                    "driver_value": {},
-                    "proposed_value": {},
+                    "driver_value": {"type": SCALAR_TYPES},
+                    "proposed_value": {"type": SCALAR_TYPES},
                     "explanation": {"type": "string"},
                     "evidence": {"type": "string"},
                 },
