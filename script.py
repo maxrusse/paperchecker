@@ -9,7 +9,7 @@
 # - Any DISAGREE/UNSURE or missing review becomes a CRITICAL validation issue and is clearly logged in Word.
 
 import os, json, re, copy
-from datetime import datetime
+from datetime import datetime, UTC
 import fitz  # PyMuPDF
 import openpyxl
 from docx import Document
@@ -28,8 +28,8 @@ PDF_PATHS = [
 ]
 
 TEMPLATE_XLSX = "/mnt/data/Prevention of MRONJ_Extraction Sheet (Oli).xlsx"
-OUT_XLSX = f"/mnt/data/mronj_prevention_filled_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
-OUT_DOCX = f"/mnt/data/mronj_prevention_human_review_log_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.docx"
+OUT_XLSX = f"/mnt/data/mronj_prevention_filled_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.xlsx"
+OUT_DOCX = f"/mnt/data/mronj_prevention_human_review_log_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.docx"
 
 DRIVER_MODEL = "gpt-5.2"
 VERIFIER_MODEL = "gemini-3-pro-preview"
@@ -209,6 +209,18 @@ EXCEL_MAP = {
 # -------------------------
 # JSON SCHEMAS (strict top-level)
 # -------------------------
+def build_sheet_schema(columns):
+    field_types = ["string", "number", "integer", "boolean", "null"]
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {key: {"type": field_types} for key in columns},
+    }
+
+SHEET_SCHEMAS = {
+    sheet_key: build_sheet_schema((cfg.get("columns") or {}).keys())
+    for sheet_key, cfg in (EXCEL_MAP.get("sheets") or {}).items()
+}
 DRIVER_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -246,13 +258,13 @@ DRIVER_SCHEMA = {
                         "systematic_appraisal",
                     ],
                     "properties": {
-                        "included_articles": {"type": ["object", "null"]},
-                        "level_of_evidence": {"type": ["object", "null"]},
-                        "rct_appraisal": {"type": ["object", "null"]},
-                        "cohort_appraisal": {"type": ["object", "null"]},
-                        "case_series_appraisal": {"type": ["object", "null"]},
-                        "case_control_appraisal": {"type": ["object", "null"]},
-                        "systematic_appraisal": {"type": ["object", "null"]},
+                        "included_articles": {"anyOf": [SHEET_SCHEMAS["included_articles"], {"type": "null"}]},
+                        "level_of_evidence": {"anyOf": [SHEET_SCHEMAS["level_of_evidence"], {"type": "null"}]},
+                        "rct_appraisal": {"anyOf": [SHEET_SCHEMAS["rct_appraisal"], {"type": "null"}]},
+                        "cohort_appraisal": {"anyOf": [SHEET_SCHEMAS["cohort_appraisal"], {"type": "null"}]},
+                        "case_series_appraisal": {"anyOf": [SHEET_SCHEMAS["case_series_appraisal"], {"type": "null"}]},
+                        "case_control_appraisal": {"anyOf": [SHEET_SCHEMAS["case_control_appraisal"], {"type": "null"}]},
+                        "systematic_appraisal": {"anyOf": [SHEET_SCHEMAS["systematic_appraisal"], {"type": "null"}]},
                     },
                 }
             },
