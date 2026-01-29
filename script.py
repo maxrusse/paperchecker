@@ -881,23 +881,44 @@ def chunk_list(xs, n):
 
 
 # -------------------------
-# MAIN
+# RUNNER (Colab-ready)
 # -------------------------
-def run_pipeline_for_pdf(pdf_path, oai_client, gclient, template_xlsx, out_xlsx, out_docx):
+def _progress(progress_fn, message):
+    if progress_fn:
+        ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        progress_fn(f"[{ts} UTC] {message}")
+
+
+def run_pipeline_for_pdf(
+    pdf_path,
+    oai_client,
+    gclient,
+    template_xlsx,
+    out_xlsx,
+    out_docx,
+    progress_fn=print,
+):
+    _progress(progress_fn, f"Starting PDF: {pdf_path}")
+    _progress(progress_fn, "Extracting text from PDF...")
     full_text = extract_pdf_text(pdf_path)
+    _progress(progress_fn, f"PDF text extracted (chars={len(full_text)}). Building view...")
     view = make_view(full_text)
+    _progress(progress_fn, f"View built (chars={len(view)}). Calling driver model...")
 
     driver_out = openai_driver_extract(oai_client, view)
+    _progress(progress_fn, "Driver model completed. Building decision list...")
 
     # Build full decision list, then verify in chunks
     decisions = build_decisions_from_driver(driver_out)
     decision_chunks = chunk_list(decisions, VERIFIER_CHUNK_SIZE)
+    _progress(progress_fn, f"Verifier round 1: {len(decision_chunks)} chunk(s).")
 
     verifier_passes = []
     working_driver = copy.deepcopy(driver_out)
 
     # Round 1: verify all decisions
-    for ch in decision_chunks:
+    for idx, ch in enumerate(decision_chunks, 1):
+        _progress(progress_fn, f"Verifier round 1: chunk {idx}/{len(decision_chunks)}...")
         vpass = gemini_verify_chunk(gclient, view, working_driver, ch)
         verifier_passes.append(vpass)
 
@@ -915,6 +936,7 @@ def run_pipeline_for_pdf(pdf_path, oai_client, gclient, template_xlsx, out_xlsx,
     flagged_paths = [p for p in flagged_paths if p]
     flagged_paths = list(dict.fromkeys(flagged_paths))  # de-dup preserving order
     if flagged_paths:
+        _progress(progress_fn, f"Verifier round 2: {len(flagged_paths)} flagged decision(s).")
         flagged_decisions = []
         for p in flagged_paths:
             flagged_decisions.append({
@@ -924,13 +946,17 @@ def run_pipeline_for_pdf(pdf_path, oai_client, gclient, template_xlsx, out_xlsx,
                 "is_critical": True,
             })
         flagged_chunks = chunk_list(flagged_decisions, VERIFIER_CHUNK_SIZE)
-        for ch in flagged_chunks:
+        for idx, ch in enumerate(flagged_chunks, 1):
+            _progress(progress_fn, f"Verifier round 2: chunk {idx}/{len(flagged_chunks)}...")
             vpass2 = gemini_verify_chunk(gclient, view, working_driver, ch)
             verifier_passes.append(vpass2)
             patch2 = vpass2.get("suggested_patch")
             if isinstance(patch2, dict) and patch2:
                 working_driver = deep_merge(working_driver, patch2)
+    else:
+        _progress(progress_fn, "Verifier round 2 skipped (no flagged decisions).")
 
+    _progress(progress_fn, "Building final object + writing outputs...")
     final_obj = build_final_object(working_driver, verifier_passes, verifier_model=VERIFIER_MODEL, version="2.1")
 
     # Persist: for first PDF, template_xlsx is the original template.
@@ -942,28 +968,38 @@ def run_pipeline_for_pdf(pdf_path, oai_client, gclient, template_xlsx, out_xlsx,
     with open(audit_path, "w", encoding="utf-8") as f:
         json.dump(final_obj, f, ensure_ascii=False, indent=2)
 
+    _progress(progress_fn, f"Completed PDF: {pdf_path}")
     return final_obj
 
 
-def main():
-    if not PDF_PATHS:
-        raise RuntimeError("PDF_PATHS is empty. Set at least one PDF path.")
+def run_pipeline(
+    pdf_paths=None,
+    template_xlsx=TEMPLATE_XLSX,
+    out_xlsx=OUT_XLSX,
+    out_docx=OUT_DOCX,
+    openai_api_key=None,
+    google_api_key=None,
+    progress_fn=print,
+):
+    if not pdf_paths:
+        raise RuntimeError("pdf_paths is empty. Provide at least one PDF path.")
+    if not os.path.exists(template_xlsx):
+        raise FileNotFoundError(template_xlsx)
 
-    if not os.path.exists(TEMPLATE_XLSX):
-        raise FileNotFoundError(TEMPLATE_XLSX)
+    openai_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+    google_key = google_api_key or os.getenv("GOOGLE_API_KEY")
+    if not openai_key:
+        raise RuntimeError("Missing OPENAI_API_KEY (env var or openai_api_key arg).")
+    if not google_key:
+        raise RuntimeError("Missing GOOGLE_API_KEY (env var or google_api_key arg).")
 
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("Missing OPENAI_API_KEY env var.")
-    if not os.getenv("GOOGLE_API_KEY"):
-        raise RuntimeError("Missing GOOGLE_API_KEY env var.")
+    oai_client = OpenAI(api_key=openai_key)
+    gclient = genai.Client(api_key=google_key)
 
-    oai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    gclient = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+    current_template = template_xlsx
+    finals = []
 
-    # Accumulate in a single workbook output across PDFs
-    current_template = TEMPLATE_XLSX
-
-    for pdf in PDF_PATHS:
+    for pdf in pdf_paths:
         if not os.path.exists(pdf):
             raise FileNotFoundError(pdf)
 
@@ -972,20 +1008,26 @@ def main():
             oai_client=oai_client,
             gclient=gclient,
             template_xlsx=current_template,
-            out_xlsx=OUT_XLSX,
-            out_docx=OUT_DOCX,
+            out_xlsx=out_xlsx,
+            out_docx=out_docx,
+            progress_fn=progress_fn,
         )
-        # After first run, keep writing into OUT_XLSX
-        current_template = OUT_XLSX
+        current_template = out_xlsx
+        finals.append(final_obj)
 
-        # Minimal console output (ASCII)
         pid = final_obj.get("paper_id") or {}
-        print("DONE pdf=", pdf, "pmid=", pid.get("pmid"), "study_type=", final_obj.get("study_type"),
-              "needs_human_review=", (final_obj.get("validation") or {}).get("needs_human_review"))
+        _progress(
+            progress_fn,
+            "DONE pdf="
+            + str(pdf)
+            + " pmid="
+            + str(pid.get("pmid"))
+            + " study_type="
+            + str(final_obj.get("study_type"))
+            + " needs_human_review="
+            + str((final_obj.get("validation") or {}).get("needs_human_review")),
+        )
 
-    print("WROTE_XLSX:", OUT_XLSX)
-    print("WROTE_DOCX:", OUT_DOCX)
-
-
-if __name__ == "__main__":
-    main()
+    _progress(progress_fn, f"WROTE_XLSX: {out_xlsx}")
+    _progress(progress_fn, f"WROTE_DOCX: {out_docx}")
+    return finals
