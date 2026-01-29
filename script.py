@@ -214,6 +214,7 @@ def build_sheet_schema(columns):
     return {
         "type": "object",
         "additionalProperties": False,
+        "required": list(columns),
         "properties": {key: {"type": field_types} for key in columns},
     }
 
@@ -277,7 +278,7 @@ DRIVER_SCHEMA = {
                 "required": ["path", "value", "evidence", "is_critical"],
                 "properties": {
                     "path": {"type": "string"},
-                    "value": {},
+                    "value": {"type": ["string", "number", "integer", "boolean", "null", "object", "array"]},
                     "evidence": {"type": "string"},
                     "is_critical": {"type": "boolean"},
                 },
@@ -305,8 +306,8 @@ VERIFIER_SCHEMA = {
                     "path": {"type": "string"},
                     "is_critical": {"type": "boolean"},
                     "status": {"type": "string", "enum": ["AGREE", "DISAGREE", "UNSURE"]},
-                    "driver_value": {},
-                    "proposed_value": {},
+                    "driver_value": {"type": ["string", "number", "integer", "boolean", "null", "object", "array"]},
+                    "proposed_value": {"type": ["string", "number", "integer", "boolean", "null", "object", "array"]},
                     "explanation": {"type": "string"},
                     "evidence": {"type": "string"},
                 },
