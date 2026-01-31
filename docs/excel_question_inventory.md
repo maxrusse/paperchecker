@@ -20,68 +20,68 @@ Source: `Prevention of MRONJ_Extraction Sheet (Oli).xlsx`.
 
 Note: this sheet uses **three header rows**. Row 1 provides grouped bands (e.g., Gender/Site/Primary cause/Type of ARDs), row 2 breaks those into specific fields (e.g., Male/Female, Maxilla/Mandible/Both), and row 3 further splits the ARD subtypes and MRONJ stage. The per-column list below reflects the **combined per-column prompts** from rows 1–3 (so every blank header cell becomes a distinct subquestion).
 
-#### Grouped subquestions with expected inputs
+#### Grouped subquestions with expected inputs (slim)
 
 - **Cols 1–6: Identification & demographics**
-  - 1. PMID — expected: numeric ID (integer).
-  - 2. Author — expected: string (first author).
-  - 3. Year — expected: integer year.
-  - 4. Study Design — expected: string (e.g., RCT, cohort, case series).
-  - 5. Number of pts — expected: integer.
-  - 6. Age (Mean in Years) — expected: number (mean age).
+  - 1. PMID — integer.
+  - 2. Author — short text (first author).
+  - 3. Year — integer year.
+  - 4. Study Design — short text (e.g., RCT, cohort, case series).
+  - 5. Number of pts — integer.
+  - 6. Age (Mean in Years) — number.
 
-- **Cols 7–8: Gender**
-  - 7. Gender / Male — expected: integer count (male n).
-  - 8. Female — expected: integer count (female n).
+- **Cols 7–8: Gender (counts)**
+  - 7. Gender / Male — integer count.
+  - 8. Female — integer count.
 
-- **Cols 9–11: Site**
-  - 9. Site / Maxilla — expected: flag (1/0) or count if reported.
-  - 10. Mandible — expected: flag (1/0) or count if reported.
-  - 11. Both — expected: flag (1/0) or count if reported.
+- **Cols 9–11: Site (flags)**
+  - 9. Site / Maxilla — 1/0.
+  - 10. Mandible — 1/0.
+  - 11. Both — 1/0.
 
-- **Cols 12–16: Primary cause**
-  - 12. Primary cause / Brst cancer — expected: flag (1/0) or count.
-  - 13. Prst Cancer — expected: flag (1/0) or count.
-  - 14. MM — expected: flag (1/0) or count.
-  - 15. Osteoporosis — expected: flag (1/0) or count.
-  - 16. Other — expected: flag (1/0) or count (details should go in the “Other details” field in the template if available elsewhere).
+- **Cols 12–16: Primary cause (flags)**
+  - 12. Primary cause / Brst cancer — 1/0.
+  - 13. Prst Cancer — 1/0.
+  - 14. MM — 1/0.
+  - 15. Osteoporosis — 1/0.
+  - 16. Other — 1/0.
 
-- **Cols 17–27: Type of ARDs**
-  - 17. Type of ARDs / Bisphosphonates / Zoledronate — expected: flag (1/0) or count.
-  - 18. Pamidronate — expected: flag (1/0) or count.
-  - 19. Residronate — expected: flag (1/0) or count.
-  - 20. Alendronate — expected: flag (1/0) or count.
-  - 21. Ibandronate — expected: flag (1/0) or count.
-  - 22. Combination — expected: flag (1/0) or count.
-  - 23. Etidronate — expected: flag (1/0) or count.
-  - 24. Clodronate — expected: flag (1/0) or count.
-  - 25. Unknown/Other — expected: flag (1/0) or count (details if present).
-  - 26. Denosumab — expected: flag (1/0) or count.
-  - 27. Both — expected: flag (1/0) or count (both ARD classes).
+- **Cols 17–27: Type of ARDs (flags)**
+  - 17. Type of ARDs / Bisphosphonates / Zoledronate — 1/0.
+  - 18. Pamidronate — 1/0.
+  - 19. Residronate — 1/0.
+  - 20. Alendronate — 1/0.
+  - 21. Ibandronate — 1/0.
+  - 22. Combination — 1/0.
+  - 23. Etidronate — 1/0.
+  - 24. Clodronate — 1/0.
+  - 25. Unknown/Other — 1/0.
+  - 26. Denosumab — 1/0.
+  - 27. Both — 1/0.
 
-- **Cols 28–33: Route of admin**
-  - 28. Route of admin / Intra-V — expected: flag (1/0) or count.
-  - 29. Oral — expected: flag (1/0) or count.
-  - 30. IM — expected: flag (1/0) or count.
-  - 31. Subcutaneous — expected: flag (1/0) or count.
-  - 32. Both — expected: flag (1/0) or count.
-  - 33. Not reported(N/R) — expected: flag (1/0).
+- **Cols 28–33: Route of admin (flags)**
+  - 28. Route of admin / Intra-V — 1/0.
+  - 29. Oral — 1/0.
+  - 30. IM — 1/0.
+  - 31. Subcutaneous — 1/0.
+  - 32. Both — 1/0.
+  - 33. Not reported(N/R) — 1/0.
 
-- **Cols 34–35: Stage of MRONJ**
-  - 34. Stage of MRONJ / At Risk — expected: flag (1/0) or count.
-  - 35. Stage 0 — expected: flag (1/0) or count.
+- **Cols 34–35: Stage of MRONJ (flags)**
+  - 34. Stage of MRONJ / At Risk — 1/0.
+  - 35. Stage 0 — 1/0.
 
-- **Cols 36–38: Interventions & groups**
-  - 36. Prevention Technique — expected: short string description.
-  - 37. Groups / Intervention — expected: short string description.
-  - 38. Control — expected: short string description.
+- **Cols 36–38: Interventions & groups (text)**
+  - 36. Prevention Technique — short text.
+  - 37. Groups / Intervention — short text.
+  - 38. Control — short text.
 
 - **Cols 39–43: Follow-up & outcomes**
-  - 39. Follow-up (Mean in Months) — expected: number.
-  - 40. Follow-up Range — expected: string or number range.
-  - 41. Outcome variable — expected: short string description.
-  - 42. MRONJ Development — expected: categorical (Yes/No/Unclear/NR).
-  - 43. If Yes, Details — expected: short string detail.
+  - 39. Follow-up (Mean in Months) — number.
+  - 40. Follow-up Range — short text or numeric range.
+  - 41. Outcome variable — short text.
+  - 42. MRONJ Development — Yes/No/Unclear/NR.
+  - 43. If Yes, Details — short text.
 
 #### Per-column prompts (combined headers, verbatim)
 
