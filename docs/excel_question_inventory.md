@@ -20,51 +20,51 @@ Source: `Prevention of MRONJ_Extraction Sheet (Oli).xlsx`.
 
 Note: this sheet uses **three header rows**. Row 1 provides grouped bands (e.g., Gender/Site/Primary cause/Type of ARDs), row 2 breaks those into specific fields (e.g., Male/Female, Maxilla/Mandible/Both), and row 3 further splits the ARD subtypes and MRONJ stage. The per-column list below reflects the **combined per-column prompts** from rows 1–3 (so every blank header cell becomes a distinct subquestion).
 
-#### Per-column prompts (combined headers) with expected input (sorted by key)
+#### Per-column prompts (combined headers) with expected input (Excel order)
 
-- Age (Mean in Years) — number.
-- Alendronate — 1/0.
-- Author — short text (first author).
-- Both (ARDs) — 1/0.
-- Both (Route) — 1/0.
-- Both (Site) — 1/0.
-- Brst cancer — 1/0.
-- Clodronate — 1/0.
-- Combination — 1/0.
-- Control — short text.
-- Denosumab — 1/0.
-- Etidronate — 1/0.
-- Female — integer count.
-- Follow-up (Mean in Months) — number.
-- Follow-up Range — short text or numeric range.
-- Gender / Male — integer count.
-- Groups / Intervention — short text.
-- Ibandronate — 1/0.
-- If Yes, Details — short text.
-- IM — 1/0.
-- MM — 1/0.
-- Mandible — 1/0.
-- MRONJ Development — Yes/No/Unclear/NR.
-- Number of pts — integer.
-- Not reported(N/R) — 1/0.
-- Oral — 1/0.
-- Osteoporosis — 1/0.
-- Other — 1/0.
-- Outcome variable — short text.
-- PMID — integer.
-- Pamidronate — 1/0.
-- Prst Cancer — 1/0.
-- Prevention Technique — short text.
-- Residronate — 1/0.
-- Route of admin / Intra-V — 1/0.
-- Site / Maxilla — 1/0.
-- Stage 0 — 1/0.
-- Stage of MRONJ / At Risk — 1/0.
-- Study Design — short text (e.g., RCT, cohort, case series).
-- Subcutaneous — 1/0.
-- Type of ARDs / Bisphosphonates / Zoledronate — 1/0.
-- Unknown/Other — 1/0.
-- Year — integer year.
+1. PMID — integer PubMed ID.
+2. Author — short text (first author or first listed author).
+3. Year — integer publication year.
+4. Study Design — short text (e.g., RCT, cohort, case series).
+5. Number of pts — integer count of participants.
+6. Age (Mean in Years) — number for mean age.
+7. Gender / Male — integer count of male participants.
+8. Female — integer count of female participants.
+9. Site / Maxilla — 1/0 flag indicating maxilla site reported.
+10. Mandible — 1/0 flag indicating mandible site reported.
+11. Both — 1/0 flag indicating both sites reported.
+12. Primary cause / Brst cancer — 1/0 flag indicating breast cancer.
+13. Prst Cancer — 1/0 flag indicating prostate cancer.
+14. MM — 1/0 flag indicating multiple myeloma.
+15. Osteoporosis — 1/0 flag indicating osteoporosis.
+16. Other — 1/0 flag indicating other primary cause.
+17. Type of ARDs / Bisphosphonates / Zoledronate — 1/0 flag indicating zoledronate.
+18. Pamidronate — 1/0 flag indicating pamidronate.
+19. Residronate — 1/0 flag indicating risedronate.
+20. Alendronate — 1/0 flag indicating alendronate.
+21. Ibandronate — 1/0 flag indicating ibandronate.
+22. Combination — 1/0 flag indicating combination bisphosphonate therapy.
+23. Etidronate — 1/0 flag indicating etidronate.
+24. Clodronate — 1/0 flag indicating clodronate.
+25. Unknown/Other — 1/0 flag indicating unknown/other bisphosphonate.
+26. Denosumab — 1/0 flag indicating denosumab.
+27. Both — 1/0 flag indicating both ARD classes reported.
+28. Route of admin / Intra-V — 1/0 flag indicating IV administration.
+29. Oral — 1/0 flag indicating oral administration.
+30. IM — 1/0 flag indicating intramuscular administration.
+31. Subcutaneous — 1/0 flag indicating subcutaneous administration.
+32. Both — 1/0 flag indicating multiple routes.
+33. Not reported(N/R) — 1/0 flag indicating route not reported.
+34. Stage of MRONJ / At Risk — 1/0 flag indicating at-risk stage.
+35. Stage 0 — 1/0 flag indicating stage 0.
+36. Prevention Technique — short text describing prevention technique.
+37. Groups / Intervention — short text describing intervention group.
+38. Control — short text describing control group.
+39. Follow-up (Mean in Months) — number for mean follow-up duration.
+40. Follow-up Range — short text or numeric range for follow-up.
+41. Outcome variable — short text describing outcome variable.
+42. MRONJ Development — categorical Yes/No/Unclear/NR.
+43. If Yes, Details — short text details when MRONJ development is Yes.
 
 ### Level of Evidence (6 columns)
 
