@@ -31,14 +31,19 @@ TEMPLATE_XLSX = "/mnt/data/Prevention of MRONJ_Extraction Sheet (Oli).xlsx"
 OUT_XLSX = f"/mnt/data/mronj_prevention_filled_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.xlsx"
 OUT_DOCX = f"/mnt/data/mronj_prevention_human_review_log_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.docx"
 
-DRIVER_MODEL = "gpt-5.2"
-VERIFIER_MODEL = "gemini-3-pro-preview"
+OPENAI_DRIVER_MODEL = "gpt-5.2"
+GEMINI_DRIVER_MODEL = "gemini-3-pro-preview"
+OPENAI_VERIFIER_MODEL = "gpt-5.2"
+GEMINI_VERIFIER_MODEL = "gemini-3-pro-preview"
+SUPERVISOR_MODEL = "gpt-5.2"
 
 REASONING_EFFORT_OPENAI = "medium"   # none|low|medium|high|xhigh
 THINKING_LEVEL_GEMINI = "low"        # minimal|low|high
 
 MAX_VIEW_CHARS = 60000
 VERIFIER_CHUNK_SIZE = 24
+NUMERIC_TOL_ABS = 0.01
+NUMERIC_TOL_REL = 0.01
 
 
 # -------------------------
@@ -320,6 +325,18 @@ VERIFIER_SCHEMA = {
     },
 }
 
+SUPERVISOR_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["status", "value", "evidence", "confidence"],
+    "properties": {
+        "status": {"type": "string", "enum": ["PICK_A", "PICK_B", "UNSURE"]},
+        "value": {"type": SCALAR_TYPES},
+        "evidence": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    },
+}
+
 
 # -------------------------
 # PIPELINE CORE (validator + excel + word)
@@ -366,6 +383,95 @@ def deep_merge(a, b):
         else:
             out[k] = copy.deepcopy(v)
     return out
+
+def sanitize_for_model_input(obj):
+    if not isinstance(obj, dict):
+        return obj
+    scrub = copy.deepcopy(obj)
+    for k in list(scrub.keys()):
+        if k in ("verification", "validation", "verifier_model", "model_meta", "model"):
+            scrub.pop(k, None)
+    return scrub
+
+def _normalize_string(v):
+    if not isinstance(v, str):
+        return v
+    s = v.strip()
+    if s == "":
+        return None
+    sl = s.lower()
+    canonical = {
+        "yes": "Yes",
+        "no": "No",
+        "unclear": "Unclear",
+        "nr": "NR",
+        "n/a": "NR",
+        "na": "NR",
+        "not reported": "NR",
+    }
+    if sl in canonical:
+        return canonical[sl]
+    return s
+
+def _coerce_number(v):
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v.strip())
+        except ValueError:
+            return None
+    return None
+
+def _values_match(a, b, abs_tol=NUMERIC_TOL_ABS, rel_tol=NUMERIC_TOL_REL):
+    if a is None and b is None:
+        return True
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b
+    na = _normalize_string(a)
+    nb = _normalize_string(b)
+    if na == nb:
+        return True
+    ca = _coerce_number(a)
+    cb = _coerce_number(b)
+    if ca is not None and cb is not None:
+        if abs(ca - cb) <= abs_tol:
+            return True
+        if abs(cb) > 0 and abs(ca - cb) / abs(cb) <= rel_tol:
+            return True
+    return False
+
+def extract_report_payload(final_obj):
+    return {
+        "paper_id": final_obj.get("paper_id") or {"pmid": None, "doi": None, "title": None},
+        "study_type": final_obj.get("study_type", "unclear"),
+        "record": final_obj.get("record") or {"sheets": {}},
+    }
+
+def report_leaf_paths(payload):
+    base = {"study_type": payload.get("study_type"), "record": payload.get("record")}
+    paths = infer_all_leaf_paths(base)
+    for key in ("pmid", "doi", "title"):
+        paths.append(f"/paper_id/{key}")
+    out = []
+    seen = set()
+    for p in paths:
+        if p not in seen:
+            out.append(p)
+            seen.add(p)
+    return out
+
+def compare_reports_with_tolerance(payload_a, payload_b, abs_tol=NUMERIC_TOL_ABS, rel_tol=NUMERIC_TOL_REL):
+    mismatches = []
+    paths = report_leaf_paths(payload_a) + report_leaf_paths(payload_b)
+    paths = list(dict.fromkeys(paths))
+    for path in paths:
+        va = json_pointer_get(payload_a, path)
+        vb = json_pointer_get(payload_b, path)
+        if _values_match(va, vb, abs_tol=abs_tol, rel_tol=rel_tol):
+            continue
+        mismatches.append({"path": path, "a": va, "b": vb})
+    return mismatches
 
 def _normalize_excel_value(v):
     if isinstance(v, bool):
@@ -792,6 +898,25 @@ VERIFIER_USER_TEMPLATE = (
     "{DECISIONS_TO_REVIEW}\n"
 )
 
+SUPERVISOR_SYSTEM = (
+    "You are an independent adjudicator.\n"
+    "Given paper text and two candidate values for a single field, choose the better supported value.\n"
+    "Return PICK_A, PICK_B, or UNSURE.\n"
+    "Evidence must be short (1 sentence), no long quotes.\n"
+    "Return strict JSON that matches the provided schema.\n"
+)
+
+SUPERVISOR_USER_TEMPLATE = (
+    "PAPER_TEXT (VIEW):\n"
+    "{VIEW}\n\n"
+    "FIELD_PATH:\n"
+    "{PATH}\n\n"
+    "CANDIDATE_A:\n"
+    "{VAL_A}\n\n"
+    "CANDIDATE_B:\n"
+    "{VAL_B}\n"
+)
+
 
 # -------------------------
 # LLM CALLS
@@ -799,7 +924,7 @@ VERIFIER_USER_TEMPLATE = (
 def openai_driver_extract(oai_client, view_text):
     driver_user = DRIVER_USER_TEMPLATE.replace("{VIEW}", view_text)
     resp = oai_client.responses.create(
-        model=DRIVER_MODEL,
+        model=OPENAI_DRIVER_MODEL,
         reasoning={"effort": REASONING_EFFORT_OPENAI},
         input=[
             {"role": "system", "content": DRIVER_SYSTEM},
@@ -809,6 +934,21 @@ def openai_driver_extract(oai_client, view_text):
     )
     return json.loads(resp.output_text)
 
+def gemini_driver_extract(gclient, view_text):
+    driver_user = DRIVER_USER_TEMPLATE.replace("{VIEW}", view_text)
+    resp = gclient.models.generate_content(
+        model=GEMINI_DRIVER_MODEL,
+        contents=driver_user,
+        config=types.GenerateContentConfig(
+            system_instruction=DRIVER_SYSTEM,
+            response_mime_type="application/json",
+            response_json_schema=DRIVER_SCHEMA,
+            thinking_config=types.ThinkingConfig(thinking_level=THINKING_LEVEL_GEMINI),
+            temperature=0.0,
+        ),
+    )
+    return json.loads(resp.text)
+
 def gemini_verify_chunk(gclient, view_text, driver_json, decisions_to_review):
     verifier_user = VERIFIER_USER_TEMPLATE.format(
         VIEW=view_text,
@@ -816,7 +956,7 @@ def gemini_verify_chunk(gclient, view_text, driver_json, decisions_to_review):
         DECISIONS_TO_REVIEW=json.dumps(decisions_to_review, ensure_ascii=True),
     )
     resp = gclient.models.generate_content(
-        model=VERIFIER_MODEL,
+        model=GEMINI_VERIFIER_MODEL,
         contents=verifier_user,
         config=types.GenerateContentConfig(
             system_instruction=VERIFIER_SYSTEM,
@@ -827,6 +967,41 @@ def gemini_verify_chunk(gclient, view_text, driver_json, decisions_to_review):
         ),
     )
     return json.loads(resp.text)
+
+def openai_verify_chunk(oai_client, view_text, driver_json, decisions_to_review):
+    verifier_user = VERIFIER_USER_TEMPLATE.format(
+        VIEW=view_text,
+        DRIVER_JSON=json.dumps(driver_json, ensure_ascii=True),
+        DECISIONS_TO_REVIEW=json.dumps(decisions_to_review, ensure_ascii=True),
+    )
+    resp = oai_client.responses.create(
+        model=OPENAI_VERIFIER_MODEL,
+        reasoning={"effort": REASONING_EFFORT_OPENAI},
+        input=[
+            {"role": "system", "content": VERIFIER_SYSTEM},
+            {"role": "user", "content": verifier_user},
+        ],
+        text={"format": {"type": "json_schema", "name": "mronj_prevention_verifier", "schema": VERIFIER_SCHEMA, "strict": True}},
+    )
+    return json.loads(resp.output_text)
+
+def openai_supervise_decision(oai_client, view_text, path, val_a, val_b):
+    supervisor_user = SUPERVISOR_USER_TEMPLATE.format(
+        VIEW=view_text,
+        PATH=path,
+        VAL_A=json.dumps(val_a, ensure_ascii=True),
+        VAL_B=json.dumps(val_b, ensure_ascii=True),
+    )
+    resp = oai_client.responses.create(
+        model=SUPERVISOR_MODEL,
+        reasoning={"effort": REASONING_EFFORT_OPENAI},
+        input=[
+            {"role": "system", "content": SUPERVISOR_SYSTEM},
+            {"role": "user", "content": supervisor_user},
+        ],
+        text={"format": {"type": "json_schema", "name": "mronj_supervisor", "schema": SUPERVISOR_SCHEMA, "strict": True}},
+    )
+    return json.loads(resp.output_text)
 
 
 # -------------------------
@@ -919,7 +1094,7 @@ def run_pipeline_for_pdf(
     # Round 1: verify all decisions
     for idx, ch in enumerate(decision_chunks, 1):
         _progress(progress_fn, f"Verifier round 1: chunk {idx}/{len(decision_chunks)}...")
-        vpass = gemini_verify_chunk(gclient, view, working_driver, ch)
+        vpass = gemini_verify_chunk(gclient, view, sanitize_for_model_input(working_driver), ch)
         verifier_passes.append(vpass)
 
         patch = vpass.get("suggested_patch")
@@ -948,7 +1123,7 @@ def run_pipeline_for_pdf(
         flagged_chunks = chunk_list(flagged_decisions, VERIFIER_CHUNK_SIZE)
         for idx, ch in enumerate(flagged_chunks, 1):
             _progress(progress_fn, f"Verifier round 2: chunk {idx}/{len(flagged_chunks)}...")
-            vpass2 = gemini_verify_chunk(gclient, view, working_driver, ch)
+            vpass2 = gemini_verify_chunk(gclient, view, sanitize_for_model_input(working_driver), ch)
             verifier_passes.append(vpass2)
             patch2 = vpass2.get("suggested_patch")
             if isinstance(patch2, dict) and patch2:
@@ -957,7 +1132,7 @@ def run_pipeline_for_pdf(
         _progress(progress_fn, "Verifier round 2 skipped (no flagged decisions).")
 
     _progress(progress_fn, "Building final object + writing outputs...")
-    final_obj = build_final_object(working_driver, verifier_passes, verifier_model=VERIFIER_MODEL, version="2.1")
+    final_obj = build_final_object(working_driver, verifier_passes, verifier_model=GEMINI_VERIFIER_MODEL, version="2.1")
 
     # Persist: for first PDF, template_xlsx is the original template.
     # For subsequent PDFs in the same run, call with template_xlsx=out_xlsx to accumulate rows.
@@ -972,6 +1147,163 @@ def run_pipeline_for_pdf(
     return final_obj
 
 
+def run_driver_verifier_pair(
+    view_text,
+    driver_fn,
+    verify_fn,
+    verifier_model,
+    progress_fn=print,
+):
+    driver_out = driver_fn(view_text)
+    decisions = build_decisions_from_driver(driver_out)
+    decision_chunks = chunk_list(decisions, VERIFIER_CHUNK_SIZE)
+
+    verifier_passes = []
+    working_driver = copy.deepcopy(driver_out)
+
+    for idx, ch in enumerate(decision_chunks, 1):
+        _progress(progress_fn, f"Verifier round 1: chunk {idx}/{len(decision_chunks)}...")
+        vpass = verify_fn(view_text, sanitize_for_model_input(working_driver), ch)
+        verifier_passes.append(vpass)
+        patch = vpass.get("suggested_patch")
+        if isinstance(patch, dict) and patch:
+            working_driver = deep_merge(working_driver, patch)
+
+    flagged_paths = []
+    for p in verifier_passes:
+        for dr in (p.get("decision_reviews") or []):
+            if dr.get("status") in ("DISAGREE", "UNSURE"):
+                flagged_paths.append(dr.get("path"))
+
+    flagged_paths = [p for p in flagged_paths if p]
+    flagged_paths = list(dict.fromkeys(flagged_paths))
+    if flagged_paths:
+        _progress(progress_fn, f"Verifier round 2: {len(flagged_paths)} flagged decision(s).")
+        flagged_decisions = []
+        for p in flagged_paths:
+            flagged_decisions.append({
+                "path": p,
+                "value": json_pointer_get(working_driver, p),
+                "evidence": "",
+                "is_critical": True,
+            })
+        flagged_chunks = chunk_list(flagged_decisions, VERIFIER_CHUNK_SIZE)
+        for idx, ch in enumerate(flagged_chunks, 1):
+            _progress(progress_fn, f"Verifier round 2: chunk {idx}/{len(flagged_chunks)}...")
+            vpass2 = verify_fn(view_text, sanitize_for_model_input(working_driver), ch)
+            verifier_passes.append(vpass2)
+            patch2 = vpass2.get("suggested_patch")
+            if isinstance(patch2, dict) and patch2:
+                working_driver = deep_merge(working_driver, patch2)
+    else:
+        _progress(progress_fn, "Verifier round 2 skipped (no flagged decisions).")
+
+    final_obj = build_final_object(working_driver, verifier_passes, verifier_model=verifier_model, version="2.1")
+    return final_obj
+
+
+def run_pipeline_for_pdf_abba(
+    pdf_path,
+    oai_client,
+    gclient,
+    template_xlsx,
+    out_xlsx,
+    out_docx,
+    progress_fn=print,
+    supervisor_enabled=True,
+):
+    _progress(progress_fn, f"Starting PDF (ABBA): {pdf_path}")
+    _progress(progress_fn, "Extracting text from PDF...")
+    full_text = extract_pdf_text(pdf_path)
+    _progress(progress_fn, f"PDF text extracted (chars={len(full_text)}). Building view...")
+    view = make_view(full_text)
+
+    _progress(progress_fn, "Pass A: OpenAI driver -> Gemini verifier.")
+    final_a = run_driver_verifier_pair(
+        view_text=view,
+        driver_fn=lambda t: openai_driver_extract(oai_client, t),
+        verify_fn=lambda t, d, c: gemini_verify_chunk(gclient, t, d, c),
+        verifier_model=GEMINI_VERIFIER_MODEL,
+        progress_fn=progress_fn,
+    )
+
+    _progress(progress_fn, "Pass B: Gemini driver -> OpenAI verifier.")
+    final_b = run_driver_verifier_pair(
+        view_text=view,
+        driver_fn=lambda t: gemini_driver_extract(gclient, t),
+        verify_fn=lambda t, d, c: openai_verify_chunk(oai_client, t, d, c),
+        verifier_model=OPENAI_VERIFIER_MODEL,
+        progress_fn=progress_fn,
+    )
+
+    payload_a = extract_report_payload(final_a)
+    payload_b = extract_report_payload(final_b)
+    mismatches = compare_reports_with_tolerance(payload_a, payload_b)
+
+    if mismatches:
+        _progress(progress_fn, f"ABBA compare: {len(mismatches)} mismatch(es).")
+    else:
+        _progress(progress_fn, "ABBA compare: reports match within tolerance.")
+
+    resolved_payload = copy.deepcopy(payload_a)
+    unresolved = []
+    supervision_notes = []
+
+    if mismatches and supervisor_enabled:
+        _progress(progress_fn, "Supervisor adjudication starting...")
+        for mm in mismatches:
+            decision = openai_supervise_decision(
+                oai_client=oai_client,
+                view_text=view,
+                path=mm["path"],
+                val_a=mm["a"],
+                val_b=mm["b"],
+            )
+            status = decision.get("status")
+            if status == "PICK_B":
+                json_pointer_set(resolved_payload, mm["path"], mm["b"])
+            elif status == "PICK_A":
+                json_pointer_set(resolved_payload, mm["path"], mm["a"])
+            else:
+                unresolved.append(mm)
+            supervision_notes.append({
+                "path": mm["path"],
+                "status": status,
+                "evidence": decision.get("evidence", ""),
+                "confidence": decision.get("confidence", 0.0),
+            })
+
+    if mismatches and (unresolved or not supervisor_enabled):
+        raise RuntimeError(f"ABBA mismatch unresolved ({len(unresolved)}). Refusing to write outputs.")
+
+    final_obj = copy.deepcopy(final_a)
+    final_obj["record"] = resolved_payload.get("record")
+    final_obj["study_type"] = resolved_payload.get("study_type")
+    final_obj["paper_id"] = resolved_payload.get("paper_id")
+    compute_scores_inplace(final_obj)
+    extra_issues = rule_validation(final_obj)
+    base_validation = final_obj.get("validation") or {}
+    base_issues = base_validation.get("issues") or []
+    final_obj["validation"] = {
+        "needs_human_review": any(i.get("severity") == "CRITICAL" for i in (base_issues + extra_issues)),
+        "issues": base_issues + extra_issues,
+    }
+    final_obj["verification"]["abba_compare"] = {
+        "mismatch_count": len(mismatches),
+        "supervised": bool(mismatches and supervisor_enabled),
+        "supervision_notes": supervision_notes,
+    }
+
+    _progress(progress_fn, "Building final object + writing outputs...")
+    apply_final_to_outputs(final_obj, template_xlsx, out_xlsx, EXCEL_MAP, out_docx)
+
+    audit_path = out_xlsx.replace(".xlsx", f".audit_{(final_obj.get('paper_id') or {}).get('pmid')}.json")
+    with open(audit_path, "w", encoding="utf-8") as f:
+        json.dump(final_obj, f, ensure_ascii=False, indent=2)
+
+    _progress(progress_fn, f"Completed PDF (ABBA): {pdf_path}")
+    return final_obj
+
 def run_pipeline(
     pdf_paths=None,
     template_xlsx=TEMPLATE_XLSX,
@@ -980,6 +1312,8 @@ def run_pipeline(
     openai_api_key=None,
     google_api_key=None,
     progress_fn=print,
+    use_abba=True,
+    supervisor_enabled=True,
 ):
     if not pdf_paths:
         raise RuntimeError("pdf_paths is empty. Provide at least one PDF path.")
@@ -1003,15 +1337,27 @@ def run_pipeline(
         if not os.path.exists(pdf):
             raise FileNotFoundError(pdf)
 
-        final_obj = run_pipeline_for_pdf(
-            pdf_path=pdf,
-            oai_client=oai_client,
-            gclient=gclient,
-            template_xlsx=current_template,
-            out_xlsx=out_xlsx,
-            out_docx=out_docx,
-            progress_fn=progress_fn,
-        )
+        if use_abba:
+            final_obj = run_pipeline_for_pdf_abba(
+                pdf_path=pdf,
+                oai_client=oai_client,
+                gclient=gclient,
+                template_xlsx=current_template,
+                out_xlsx=out_xlsx,
+                out_docx=out_docx,
+                progress_fn=progress_fn,
+                supervisor_enabled=supervisor_enabled,
+            )
+        else:
+            final_obj = run_pipeline_for_pdf(
+                pdf_path=pdf,
+                oai_client=oai_client,
+                gclient=gclient,
+                template_xlsx=current_template,
+                out_xlsx=out_xlsx,
+                out_docx=out_docx,
+                progress_fn=progress_fn,
+            )
         current_template = out_xlsx
         finals.append(final_obj)
 
