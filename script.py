@@ -837,8 +837,67 @@ INCLUDED_KEYS = [
     "mronj_development","mronj_development_details",
 ]
 
+INCLUDED_KEY_GROUPS = {
+    "Identification": ["pmid", "author", "year", "study_design"],
+    "Participants & demographics": ["n_pts", "age_mean_years", "gender_male_n", "gender_female_n"],
+    "Lesion site": ["site_maxilla", "site_mandible", "site_both"],
+    "Primary cause": [
+        "primary_cause_breast_cancer",
+        "primary_cause_prostate_cancer",
+        "primary_cause_mm",
+        "primary_cause_osteoporosis",
+        "primary_cause_other",
+        "primary_cause_other_details",
+    ],
+    "Anti-resorptive drugs (ARDs)": [
+        "ards_bisphosphonates_alendronate",
+        "ards_bisphosphonates_zoledronate",
+        "ards_bisphosphonates_risedronate",
+        "ards_bisphosphonates_neridronate",
+        "ards_bisphosphonates_pamidronate",
+        "ards_bisphosphonates_others",
+        "ards_bisphosphonates_others_details",
+        "ards_denosumab",
+        "ards_both",
+        "ards_other_drug",
+        "ards_other_drug_details",
+    ],
+    "Administration route": [
+        "route_iv",
+        "route_oral",
+        "route_im",
+        "route_subcutaneous",
+        "route_both",
+        "route_not_reported",
+    ],
+    "MRONJ staging": ["mronj_stage_at_risk", "mronj_stage_0"],
+    "Interventions & groups": ["prevention_technique", "group_intervention", "group_control"],
+    "Follow-up & outcomes": [
+        "follow_up_mean_months",
+        "follow_up_range",
+        "outcome_variable",
+        "mronj_development",
+        "mronj_development_details",
+    ],
+}
+
+APPRAISAL_KEY_GROUPS = {
+    "rct_appraisal": ["q1_randomized", "q2_randomization_method", "q3_double_blind", "q4_blinding_method", "q5_withdrawals", "total_score"],
+    "cohort_appraisal": ["q1_clear_question", "q2_cohort_recruited", "q3_exposure_measured", "q4_outcome_measured", "q5_confounders", "q6_followup_complete", "total_score"],
+    "case_series_appraisal": ["q1_clear_aim", "q2_inclusion_criteria", "q3_consecutive_cases", "q4_outcomes_defined", "q5_followup_sufficient", "q6_statistical_analysis", "total_score"],
+    "case_control_appraisal": ["q1_clear_question", "q2_cases_representative", "q3_controls_selected", "q4_exposure_measured", "q5_confounders", "q6_results_precise", "total_score"],
+    "systematic_appraisal": ["q1_focus_question", "q2_inclusion_criteria", "q3_comprehensive_search", "q4_6_search_and_duplication", "q7_quality_assessed", "q8_combining_appropriate", "q9_conclusions_supported", "total_score"],
+}
+
+def build_grouped_keys_text(groups):
+    blocks = []
+    for title, keys in groups.items():
+        blocks.append(f"- {title}: {', '.join(keys)}")
+    return "\n".join(blocks)
+
 DRIVER_SYSTEM = (
     "You are an evidence extraction agent for MRONJ prevention literature.\n"
+    "Quality > one-shot completeness: accuracy is more important than filling every field.\n"
     "Use ONLY the provided paper text. Do not guess.\n"
     "If uncertain, use null and lower confidence.\n"
     "Evidence must be short (1 sentence), no long quotes.\n"
@@ -872,8 +931,14 @@ DRIVER_USER_TEMPLATE = (
     "- Route flags: set the most specific route(s); if truly not reported set route_not_reported=1.\n"
     "- Drug flags: set specific bisphosphonate subtype(s) if stated; denosumab if stated; ards_both if both.\n"
     "\n"
-    "Included Articles keys to fill:\n"
-    f"{', '.join(INCLUDED_KEYS)}\n"
+    "Included Articles keys to fill (grouped):\n"
+    f"{build_grouped_keys_text(INCLUDED_KEY_GROUPS)}\n"
+    "\n"
+    "Work group-by-group. If you cannot find evidence for a group, leave those fields null.\n"
+    "Do not force completion; accuracy and verifiable evidence are required.\n"
+    "\n"
+    "Appraisal sheet keys by study_type (fill only the matching sheet):\n"
+    f"{build_grouped_keys_text(APPRAISAL_KEY_GROUPS)}\n"
     "\n"
     "PAPER_TEXT (VIEW):\n"
     "{VIEW}\n"
