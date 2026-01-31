@@ -20,114 +20,51 @@ Source: `Prevention of MRONJ_Extraction Sheet (Oli).xlsx`.
 
 Note: this sheet uses **three header rows**. Row 1 provides grouped bands (e.g., Gender/Site/Primary cause/Type of ARDs), row 2 breaks those into specific fields (e.g., Male/Female, Maxilla/Mandible/Both), and row 3 further splits the ARD subtypes and MRONJ stage. The per-column list below reflects the **combined per-column prompts** from rows 1–3 (so every blank header cell becomes a distinct subquestion).
 
-#### Grouped subquestions with expected inputs (slim)
+#### Per-column prompts (combined headers) with expected input (sorted by key)
 
-- **Cols 1–6: Identification & demographics**
-  - 1. PMID — integer.
-  - 2. Author — short text (first author).
-  - 3. Year — integer year.
-  - 4. Study Design — short text (e.g., RCT, cohort, case series).
-  - 5. Number of pts — integer.
-  - 6. Age (Mean in Years) — number.
-
-- **Cols 7–8: Gender (counts)**
-  - 7. Gender / Male — integer count.
-  - 8. Female — integer count.
-
-- **Cols 9–11: Site (flags)**
-  - 9. Site / Maxilla — 1/0.
-  - 10. Mandible — 1/0.
-  - 11. Both — 1/0.
-
-- **Cols 12–16: Primary cause (flags)**
-  - 12. Primary cause / Brst cancer — 1/0.
-  - 13. Prst Cancer — 1/0.
-  - 14. MM — 1/0.
-  - 15. Osteoporosis — 1/0.
-  - 16. Other — 1/0.
-
-- **Cols 17–27: Type of ARDs (flags)**
-  - 17. Type of ARDs / Bisphosphonates / Zoledronate — 1/0.
-  - 18. Pamidronate — 1/0.
-  - 19. Residronate — 1/0.
-  - 20. Alendronate — 1/0.
-  - 21. Ibandronate — 1/0.
-  - 22. Combination — 1/0.
-  - 23. Etidronate — 1/0.
-  - 24. Clodronate — 1/0.
-  - 25. Unknown/Other — 1/0.
-  - 26. Denosumab — 1/0.
-  - 27. Both — 1/0.
-
-- **Cols 28–33: Route of admin (flags)**
-  - 28. Route of admin / Intra-V — 1/0.
-  - 29. Oral — 1/0.
-  - 30. IM — 1/0.
-  - 31. Subcutaneous — 1/0.
-  - 32. Both — 1/0.
-  - 33. Not reported(N/R) — 1/0.
-
-- **Cols 34–35: Stage of MRONJ (flags)**
-  - 34. Stage of MRONJ / At Risk — 1/0.
-  - 35. Stage 0 — 1/0.
-
-- **Cols 36–38: Interventions & groups (text)**
-  - 36. Prevention Technique — short text.
-  - 37. Groups / Intervention — short text.
-  - 38. Control — short text.
-
-- **Cols 39–43: Follow-up & outcomes**
-  - 39. Follow-up (Mean in Months) — number.
-  - 40. Follow-up Range — short text or numeric range.
-  - 41. Outcome variable — short text.
-  - 42. MRONJ Development — Yes/No/Unclear/NR.
-  - 43. If Yes, Details — short text.
-
-#### Per-column prompts (combined headers, verbatim)
-
-1. PMID
-2. Author
-3. Year
-4. Study Design
-5. Number of pts
-6. Age (Mean in Years)
-7. Gender / Male
-8. Female
-9. Site / Maxilla
-10. Mandible
-11. Both
-12. Primary cause / Brst cancer
-13. Prst Cancer
-14. MM
-15. Osteoporosis
-16. Other
-17. Type of ARDs / Bisphosphonates / Zoledronate
-18. Pamidronate
-19. Residronate
-20. Alendronate
-21. Ibandronate
-22. Combination
-23. Etidronate
-24. Clodronate
-25. Unknown/Other
-26. Denosumab
-27. Both
-28. Route of admin / Intra-V
-29. Oral
-30. IM
-31. Subcutaneous
-32. Both
-33. Not reported(N/R)
-34. Stage of MRONJ / At Risk
-35. Stage 0
-36. Prevention Technique
-37. Groups / Intervention
-38. Control
-39. Follow-up (Mean in Months)
-40. Follow-up Range
-41. Outcome variable
-42. MRONJ Development
-43. If Yes, Details
+- Age (Mean in Years) — number.
+- Alendronate — 1/0.
+- Author — short text (first author).
+- Both (ARDs) — 1/0.
+- Both (Route) — 1/0.
+- Both (Site) — 1/0.
+- Brst cancer — 1/0.
+- Clodronate — 1/0.
+- Combination — 1/0.
+- Control — short text.
+- Denosumab — 1/0.
+- Etidronate — 1/0.
+- Female — integer count.
+- Follow-up (Mean in Months) — number.
+- Follow-up Range — short text or numeric range.
+- Gender / Male — integer count.
+- Groups / Intervention — short text.
+- Ibandronate — 1/0.
+- If Yes, Details — short text.
+- IM — 1/0.
+- MM — 1/0.
+- Mandible — 1/0.
+- MRONJ Development — Yes/No/Unclear/NR.
+- Number of pts — integer.
+- Not reported(N/R) — 1/0.
+- Oral — 1/0.
+- Osteoporosis — 1/0.
+- Other — 1/0.
+- Outcome variable — short text.
+- PMID — integer.
+- Pamidronate — 1/0.
+- Prst Cancer — 1/0.
+- Prevention Technique — short text.
+- Residronate — 1/0.
+- Route of admin / Intra-V — 1/0.
+- Site / Maxilla — 1/0.
+- Stage 0 — 1/0.
+- Stage of MRONJ / At Risk — 1/0.
+- Study Design — short text (e.g., RCT, cohort, case series).
+- Subcutaneous — 1/0.
+- Type of ARDs / Bisphosphonates / Zoledronate — 1/0.
+- Unknown/Other — 1/0.
+- Year — integer year.
 
 ### Level of Evidence (6 columns)
 
