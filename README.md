@@ -1,6 +1,6 @@
 # PaperChecker
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/<YOUR_GITHUB_USERNAME>/paperchecker/blob/main/paperchecker_colab.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/paperchecker/paperchecker/blob/main/paperchecker_colab.ipynb)
 
 ## Colab notebook
 
@@ -10,5 +10,3 @@ Use the Colab notebook for an end-to-end run (PDF → JSON → validation → Ex
 2. Install dependencies and set API keys.
 3. Upload your PDFs and Excel template.
 4. Run the pipeline.
-
-> **Note**: Replace `<YOUR_GITHUB_USERNAME>` in the badge URL with your GitHub username (or organization) once this repository is published.
