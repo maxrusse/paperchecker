@@ -19,7 +19,7 @@
 # - "Level of Evidence" and "Grade of Recommendation" REQUIRE a locally agreed framework (e.g., Oxford/SIGN/GRADE/AWMF).
 #   This script can fill them if you provide definitions, but by default it leaves them null unless explicitly stated in the paper.
 
-import os, json, re, copy
+import os, json, re, copy, random, time
 from datetime import datetime, UTC
 
 import fitz  # PyMuPDF
@@ -29,6 +29,14 @@ from docx import Document
 from openai import OpenAI
 from google import genai
 from google.genai import types
+from paperchecker_utils import (
+    dedupe_decisions,
+    extract_page_from_evidence,
+    json_pointer_get,
+    normalize_excel_value,
+    normalize_pmid,
+    values_match,
+)
 
 
 # -------------------------
@@ -53,9 +61,9 @@ THINKING_LEVEL_GEMINI = "low"        # minimal|low|high
 MAX_VIEW_CHARS = 60000
 TASK_VIEW_CHARS = 25000
 VERIFIER_CHUNK_SIZE = 24
-
-NUMERIC_TOL_ABS = 0.01
-NUMERIC_TOL_REL = 0.01
+LLM_MAX_RETRIES = 3
+LLM_BACKOFF_SECONDS = 2.0
+LLM_BACKOFF_JITTER = 0.25
 
 
 # -------------------------
@@ -258,79 +266,9 @@ STUDY_DESIGN_ENUM = [
 APPRAISAL_YNUA_ENUM = ["Yes", "No", "Unclear", "Not Applicable"]
 MRONJ_DEV_ENUM = ["Yes", "No"]
 
-def _normalize_string(v):
-    if not isinstance(v, str):
-        return v
-    s = v.strip()
-    return s if s != "" else None
-
-def _normalize_excel_value(v):
-    # Keep strings as-is (to satisfy data validations). For booleans -> 1/0.
-    if isinstance(v, bool):
-        return 1 if v else 0
-    if isinstance(v, str):
-        return v.strip()
-    return v
-
-def _coerce_float(v):
-    if isinstance(v, (int, float)):
-        return float(v)
-    if isinstance(v, str):
-        try:
-            return float(v.strip())
-        except ValueError:
-            return None
-    return None
-
-def _values_match(a, b, abs_tol=NUMERIC_TOL_ABS, rel_tol=NUMERIC_TOL_REL):
-    if a is None and b is None:
-        return True
-    if isinstance(a, str) and isinstance(b, str):
-        return a.strip() == b.strip()
-    fa = _coerce_float(a)
-    fb = _coerce_float(b)
-    if fa is not None and fb is not None:
-        if abs(fa - fb) <= abs_tol:
-            return True
-        if abs(fb) > 0 and abs(fa - fb) / abs(fb) <= rel_tol:
-            return True
-    return a == b
-
-
 # -------------------------
 # JSON POINTER HELPERS + MERGE
 # -------------------------
-def json_pointer_get(obj, pointer):
-    if pointer == "" or pointer == "/":
-        return obj
-    parts = pointer.lstrip("/").split("/")
-    cur = obj
-    for p in parts:
-        p = p.replace("~1", "/").replace("~0", "~")
-        if isinstance(cur, list):
-            cur = cur[int(p)]
-        else:
-            cur = cur.get(p)
-    return cur
-
-def json_pointer_set(obj, pointer, value):
-    parts = pointer.lstrip("/").split("/")
-    cur = obj
-    for i, p in enumerate(parts):
-        p = p.replace("~1", "/").replace("~0", "~")
-        last = (i == len(parts) - 1)
-        if last:
-            if isinstance(cur, list):
-                cur[int(p)] = value
-            else:
-                cur[p] = value
-        else:
-            if isinstance(cur, list):
-                cur = cur[int(p)]
-            else:
-                if p not in cur or not isinstance(cur[p], (dict, list)):
-                    cur[p] = {}
-                cur = cur[p]
 
 def deep_merge(a, b):
     if not isinstance(a, dict) or not isinstance(b, dict):
@@ -366,7 +304,12 @@ def column_index_from_string(col):
 def _row_has_any_values(ws, row_idx, start_col=1, end_col=None):
     end_col = end_col or ws.max_column
     for c in range(start_col, end_col + 1):
-        if ws.cell(row_idx, c).value not in (None, ""):
+        cell = ws.cell(row_idx, c)
+        if cell.value not in (None, ""):
+            return True
+        if cell.data_type == "f":
+            return True
+        if cell.has_style:
             return True
     return False
 
@@ -374,9 +317,14 @@ def _find_row_by_key(ws, key_col_letter, key_value, start_row):
     if key_value in (None, ""):
         return None
     key_col_idx = column_index_from_string(key_col_letter)
+    normalized_key = normalize_pmid(key_value)
     max_row = max(ws.max_row, start_row)
     for r in range(start_row, max_row + 1):
-        if ws.cell(r, key_col_idx).value == key_value:
+        cell_val = ws.cell(r, key_col_idx).value
+        if normalized_key is not None:
+            if values_match(normalize_pmid(cell_val), normalized_key):
+                return r
+        elif values_match(cell_val, key_value):
             return r
     return None
 
@@ -437,7 +385,7 @@ def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map):
                     v = payload.get(field)
                     if v is None:
                         continue
-                    ws[f"{col_letter}{row_idx}"].value = _normalize_excel_value(v)
+                    ws[f"{col_letter}{row_idx}"].value = normalize_excel_value(v)
 
         # Back-fill author/year/study_design from Included Articles if available and blank.
         inc = sheets_data.get("included_articles") or {}
@@ -445,7 +393,7 @@ def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map):
             for f in ("author", "year", "study_design"):
                 if f in cols and ws[f"{cols[f]}{row_idx}"].value in (None, ""):
                     if inc.get(f) not in (None, ""):
-                        ws[f"{cols[f]}{row_idx}"].value = _normalize_excel_value(inc.get(f))
+                        ws[f"{cols[f]}{row_idx}"].value = normalize_excel_value(inc.get(f))
 
     # Always write these two sheets (even if sparse): boss deliverable tables.
     write_sheet("included_articles")
@@ -572,6 +520,47 @@ def make_task_view(pages, keywords, max_chars=TASK_VIEW_CHARS, window=1400):
         # Fallback: global view
         return make_global_view(pages, max_chars=max_chars)
     return joined[:max_chars]
+
+
+DECISION_KEYWORDS = {
+    "pmid": ["pmid"],
+    "doi": ["doi"],
+    "title": ["title"],
+    "author": ["author"],
+    "year": ["year"],
+    "study_design": ["study design", "randomized", "cohort", "case", "systematic review"],
+    "n_pts": ["participants", "patients", "sample", "n="],
+    "age_mean_years": ["mean age", "age"],
+    "gender_male_n": ["male", "men"],
+    "gender_female_n": ["female", "women"],
+    "prevention_technique": ["prevention", "technique"],
+    "group_intervention": ["intervention", "treatment"],
+    "group_control": ["control", "comparison"],
+    "follow_up_mean_months": ["follow-up", "months"],
+    "follow_up_range": ["follow-up", "range"],
+    "outcome_variable": ["outcome", "endpoint"],
+    "mronj_development": ["mronj", "osteonecrosis"],
+    "mronj_development_details": ["mronj", "osteonecrosis"],
+    "level_of_evidence": ["level of evidence"],
+    "grade_of_recommendation": ["grade of recommendation"],
+}
+
+def decision_keywords_for_path(path):
+    if not path:
+        return []
+    leaf = path.strip("/").split("/")[-1]
+    if leaf.startswith("q"):
+        return ["methods", "random", "blind", "confound", "follow-up", "risk of bias"]
+    return DECISION_KEYWORDS.get(leaf, [])
+
+def build_verifier_view(pages, decisions):
+    keywords = []
+    for d in decisions or []:
+        keywords.extend(decision_keywords_for_path(d.get("path")))
+    keywords = [k for k in dict.fromkeys(keywords) if k]
+    if not keywords:
+        return make_global_view(pages, max_chars=MAX_VIEW_CHARS)
+    return make_task_view(pages, keywords, max_chars=MAX_VIEW_CHARS)
 
 
 # -------------------------
@@ -934,51 +923,64 @@ def _task_user(task_name, allowed_fields_text, view_text, context_json=None):
 # -------------------------
 # LLM CALLS
 # -------------------------
+def _call_with_retries(fn, description):
+    last_exc = None
+    for attempt in range(1, LLM_MAX_RETRIES + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= LLM_MAX_RETRIES:
+                break
+            backoff = LLM_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            jitter = random.uniform(0, LLM_BACKOFF_JITTER)
+            time.sleep(backoff + jitter)
+    raise RuntimeError(f"{description} failed after {LLM_MAX_RETRIES} attempts: {last_exc}") from last_exc
+
 def openai_json(oai_client, system_text, user_text, schema, schema_name):
-    resp = oai_client.responses.create(
-        model=OPENAI_MODEL,
-        reasoning={"effort": REASONING_EFFORT_OPENAI},
-        input=[
-            {"role": "system", "content": system_text},
-            {"role": "user", "content": user_text},
-        ],
-        text={"format": {"type": "json_schema", "name": schema_name, "schema": schema, "strict": True}},
-    )
-    return json.loads(resp.output_text)
+    def _call():
+        resp = oai_client.responses.create(
+            model=OPENAI_MODEL,
+            reasoning={"effort": REASONING_EFFORT_OPENAI},
+            input=[
+                {"role": "system", "content": system_text},
+                {"role": "user", "content": user_text},
+            ],
+            text={"format": {"type": "json_schema", "name": schema_name, "schema": schema, "strict": True}},
+        )
+        return json.loads(resp.output_text)
+    return _call_with_retries(_call, f"OpenAI call ({schema_name})")
 
 def gemini_json(gclient, system_text, user_text, schema):
-    resp = gclient.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=user_text,
-        config=types.GenerateContentConfig(
-            system_instruction=system_text,
-            response_mime_type="application/json",
-            response_json_schema=schema,
-            thinking_config=types.ThinkingConfig(thinking_level=THINKING_LEVEL_GEMINI),
-            temperature=0.0,
-        ),
-    )
-    return json.loads(resp.text)
+    def _call():
+        resp = gclient.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_text,
+            config=types.GenerateContentConfig(
+                system_instruction=system_text,
+                response_mime_type="application/json",
+                response_json_schema=schema,
+                thinking_config=types.ThinkingConfig(thinking_level=THINKING_LEVEL_GEMINI),
+                temperature=0.0,
+            ),
+        )
+        return json.loads(resp.text)
+    return _call_with_retries(_call, "Gemini call")
 
 
 # -------------------------
 # DECISION UTILITIES
 # -------------------------
-def _extract_page_from_evidence(evidence_text):
-    # Evidence snippets we generate have '--- PAGE X ---' headers; model may copy that.
-    m = re.search(r"\bPAGE\s+(\d+)\b", evidence_text)
-    if m:
-        try:
-            return int(m.group(1))
-        except ValueError:
-            return None
-    return None
-
 def decisions_only_non_null(decisions):
     out = []
     for d in decisions or []:
         if d.get("value") is None:
             continue
+        if d.get("page") is None and d.get("evidence"):
+            extracted = extract_page_from_evidence(d.get("evidence"))
+            if extracted is not None:
+                d = copy.deepcopy(d)
+                d["page"] = extracted
         out.append(d)
     return out
 
@@ -1205,16 +1207,7 @@ def _apply_patch(working, patch):
     return deep_merge(working, patch)
 
 def _collect_decisions(all_task_results):
-    out = []
-    seen = set()
-    for tr in all_task_results:
-        for d in tr.get("decisions") or []:
-            path = d.get("path")
-            if not path or path in seen:
-                continue
-            out.append(d)
-            seen.add(path)
-    return out
+    return dedupe_decisions(all_task_results)
 
 def run_pipeline_for_pdf(
     pdf_path,
@@ -1356,7 +1349,6 @@ def run_pipeline_for_pdf(
     decisions_non_null = decisions_only_non_null(decisions)
 
     _progress(progress_fn, f"Verifier: reviewing {len(decisions_non_null)} non-null decision(s).")
-    verifier_view = make_global_view(pages, max_chars=MAX_VIEW_CHARS)
 
     verifier_fn = openai_verify_chunk if use_openai_verifier else gemini_verify_chunk
     verifier_model = OPENAI_MODEL if use_openai_verifier else GEMINI_MODEL
@@ -1364,6 +1356,7 @@ def run_pipeline_for_pdf(
     verifier_passes = []
     for idx, ch in enumerate(chunk_list(decisions_non_null, VERIFIER_CHUNK_SIZE), 1):
         _progress(progress_fn, f"Verifier chunk {idx}...")
+        verifier_view = build_verifier_view(pages, ch)
         vpass = verifier_fn(
             oai_client if use_openai_verifier else gclient,
             verifier_view,
