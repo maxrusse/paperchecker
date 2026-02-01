@@ -299,6 +299,21 @@ def deep_merge(a, b):
             out[k] = copy.deepcopy(v)
     return out
 
+def deep_merge_non_null(a, b):
+    if b is None:
+        return copy.deepcopy(a)
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return copy.deepcopy(b)
+    out = copy.deepcopy(a)
+    for k, v in b.items():
+        if v is None:
+            continue
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = deep_merge_non_null(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
 def sanitize_for_model_input(obj):
     if not isinstance(obj, dict):
         return obj
@@ -1151,8 +1166,8 @@ def _suggested_patch_schema():
     suggested_patch is ALWAYS an object (never null) so we avoid object|null unions
     that can break OpenAI's strict schema validation.
 
-    It is "deeply optional": required lists are empty at every level, so the model
-    can return {} when no corrections are needed, or only the corrected fields.
+    In strict mode, every object must have required lists that include every property.
+    The verifier should set unchanged fields to null and corrected fields to non-null.
     """
     def y_schema():
         return {"type": ["string", "null"], "enum": APPRAISAL_YNUA_ENUM + [None]}
@@ -1160,7 +1175,7 @@ def _suggested_patch_schema():
     paper_id_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": ["pmid", "doi", "title"],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "doi": {"type": ["string", "null"]},
@@ -1169,10 +1184,10 @@ def _suggested_patch_schema():
     }
 
     included_articles_obj = copy.deepcopy(_sheet_schema_included_articles_partial())
-    included_articles_obj["required"] = []
+    included_articles_obj["required"] = list(included_articles_obj.get("properties", {}).keys())
 
     level_of_evidence_obj = copy.deepcopy(_sheet_schema_level_of_evidence_partial())
-    level_of_evidence_obj["required"] = []
+    level_of_evidence_obj["required"] = list(level_of_evidence_obj.get("properties", {}).keys())
 
     rct_obj = {
         "type": "object",
@@ -1290,7 +1305,15 @@ def _suggested_patch_schema():
     sheets_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": [
+            "included_articles",
+            "level_of_evidence",
+            "rct_appraisal",
+            "cohort_appraisal",
+            "case_series_appraisal",
+            "case_control_appraisal",
+            "systematic_appraisal",
+        ],
         "properties": {
             "included_articles": included_articles_obj,
             "level_of_evidence": level_of_evidence_obj,
@@ -1305,7 +1328,7 @@ def _suggested_patch_schema():
     record_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": ["sheets"],
         "properties": {"sheets": sheets_obj},
     }
 
@@ -1371,7 +1394,8 @@ VERIFIER_SYSTEM = (
     "For each decision: AGREE, DISAGREE (with proposed_value), or UNSURE.\n"
     "Evidence must be short (1 sentence), no long quotes.\n"
     "If DISAGREE, propose the minimal corrected value.\n"
-    "Also provide suggested_patch as a minimal JSON object patch (only corrected fields).\n"
+    "IMPORTANT: suggested_patch MUST include ALL required keys per schema.\n"
+    "Set ONLY corrected fields to a non-null value; set all other fields to null.\n"
     "Return strict JSON matching the schema.\n"
 )
 
@@ -1781,7 +1805,7 @@ def build_final_object(working_obj, verifier_passes, decisions_non_null, verifie
     for p in verifier_passes or []:
         patch = p.get("suggested_patch")
         if isinstance(patch, dict) and patch:
-            merged = deep_merge(merged, patch)
+            merged = deep_merge_non_null(merged, patch)
 
     compute_scores_inplace(merged)
 
@@ -2161,7 +2185,7 @@ def run_pipeline_for_pdf(
         if vpass:
             patch = vpass.get("suggested_patch")
             if isinstance(patch, dict) and patch:
-                working = deep_merge(working, patch)
+                working = deep_merge_non_null(working, patch)
 
     if ENABLE_PUBMED_LOOKUP:
         working.setdefault("paper_id", {})["pmid"] = None
