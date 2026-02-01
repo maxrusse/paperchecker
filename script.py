@@ -1699,8 +1699,18 @@ def run_pipeline_for_pdf(
     verifier_model = OPENAI_MODEL if use_openai_verifier else GEMINI_MODEL
 
     verifier_passes = []
-    for idx, ch in enumerate(chunk_list(decisions_non_null, VERIFIER_CHUNK_SIZE), 1):
-        _progress(progress_fn, f"Verifier chunk {idx}...")
+    chunks = chunk_list(decisions_non_null, VERIFIER_CHUNK_SIZE)
+    total_chunks = len(chunks)
+    total_decisions = len(decisions_non_null)
+    for idx, ch in enumerate(chunks, 1):
+        start_idx = (idx - 1) * VERIFIER_CHUNK_SIZE + 1
+        end_idx = min(idx * VERIFIER_CHUNK_SIZE, total_decisions)
+        pages = sorted({d.get("page") for d in ch if d.get("page") is not None})
+        page_hint = f" pages={pages}" if pages else ""
+        _progress(
+            progress_fn,
+            f"Verifier chunk {idx}/{total_chunks}: decisions {start_idx}-{end_idx} of {total_decisions}.{page_hint}",
+        )
         verifier_view = build_verifier_view(pages, ch)
         vpass = verifier_fn(
             oai_client if use_openai_verifier else gclient,
@@ -1737,6 +1747,8 @@ def run_pipeline(
     progress_fn=print,
     use_gemini_driver=False,
     use_openai_verifier=False,
+    skip_existing_evals=True,
+    processed_state_path=None,
 ):
     if not pdf_paths:
         raise RuntimeError("pdf_paths is empty. Provide at least one PDF path.")
@@ -1755,14 +1767,43 @@ def run_pipeline(
     oai_client = OpenAI(api_key=openai_key)
     gclient = genai.Client(api_key=google_key)
 
-    current_template = actual_template
+    def load_processed_state(state_path):
+        if not state_path or not os.path.exists(state_path):
+            return []
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, list):
+                return payload
+        except Exception as exc:
+            _progress(progress_fn, f"Warning: failed to read processed state ({state_path}): {exc}")
+        return []
+
+    def write_processed_state(state_path, entries):
+        if not state_path:
+            return
+        os.makedirs(os.path.dirname(state_path) or ".", exist_ok=True)
+        with open(state_path, "w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
+
+    state_path = processed_state_path or f"{out_xlsx}.processed.json"
+    processed_entries = load_processed_state(state_path)
+    processed_set = {os.path.abspath(e.get("pdf_path")) for e in processed_entries if isinstance(e, dict) and e.get("pdf_path")}
+
+    current_template = out_xlsx if os.path.exists(out_xlsx) else actual_template
     finals = []
+    processed_this_run = 0
     for idx, pdf in enumerate(pdf_paths):
         if not os.path.exists(pdf):
             raise FileNotFoundError(pdf)
 
-        # Clear old/demo data only on first PDF when using original template
-        is_first_pdf = (idx == 0)
+        abs_pdf = os.path.abspath(pdf)
+        if skip_existing_evals and abs_pdf in processed_set:
+            _progress(progress_fn, f"Skipping already processed PDF: {pdf}")
+            continue
+
+        # Clear old/demo data only when creating a new output workbook
+        is_first_pdf = (processed_this_run == 0 and not os.path.exists(out_xlsx))
 
         final_obj = run_pipeline_for_pdf(
             pdf_path=pdf,
@@ -1778,9 +1819,19 @@ def run_pipeline(
         )
         current_template = out_xlsx
         finals.append(final_obj)
+        processed_this_run += 1
 
         pid = final_obj.get("paper_id") or {}
         _progress(progress_fn, "DONE pdf=" + str(pdf) + " pmid=" + str(pid.get("pmid")) + " study_type=" + str(final_obj.get("study_type")) + " needs_human_review=" + str((final_obj.get("validation") or {}).get("needs_human_review")))
+
+        processed_entry = {
+            "pdf_path": abs_pdf,
+            "pmid": pid.get("pmid"),
+            "processed_at": datetime.now(UTC).isoformat(),
+        }
+        processed_entries.append(processed_entry)
+        processed_set.add(abs_pdf)
+        write_processed_state(state_path, processed_entries)
 
     _progress(progress_fn, f"WROTE_XLSX: {out_xlsx}")
     _progress(progress_fn, f"WROTE_DOCX: {out_docx}")
