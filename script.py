@@ -2002,7 +2002,7 @@ def run_pipeline_for_pdf(
     # Ensure nested structures exist
     if "record" not in working:
         working["record"] = {}
-    if "sheets" not in working["record"]:
+    if not isinstance(working["record"].get("sheets"), dict):
         working["record"]["sheets"] = {}
     if working["record"]["sheets"].get("included_articles") is None:
         working["record"]["sheets"]["included_articles"] = {}
