@@ -1656,6 +1656,13 @@ def _prune_redundant_patch_fields(patch: Optional[dict]) -> Optional[dict]:
     if not isinstance(patch, dict) or not patch:
         return patch
     cleaned = copy.deepcopy(patch)
+    record = cleaned.get("record")
+    if isinstance(record, dict):
+        sheets = record.get("sheets")
+        if sheets is None or not isinstance(sheets, dict):
+            record.pop("sheets", None)
+        if not record:
+            cleaned.pop("record", None)
     paper_id = cleaned.get("paper_id")
     if isinstance(paper_id, dict) and all(paper_id.get(k) in (None, "") for k in ("pmid", "doi", "title")):
         cleaned.pop("paper_id", None)
