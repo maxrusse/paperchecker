@@ -1406,7 +1406,7 @@ def openai_verify_chunk(oai_client, view_text, driver_json, decisions_to_review)
 # -------------------------
 def write_review_docx(final_obj, docx_path, append=True):
     from docx.shared import Inches, Pt, RGBColor
-    from docx.enum.table import Wd_Table_Alignment
+    from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import nsdecls
     from docx.oxml import parse_xml
@@ -1458,7 +1458,7 @@ def write_review_docx(final_obj, docx_path, append=True):
         # Create table with 5 columns: Field, Value, Status, Explanation, Evidence
         t = doc.add_table(rows=1, cols=5)
         t.style = "Table Grid"
-        t.alignment = Wd_Table_Alignment.LEFT
+        t.alignment = WD_TABLE_ALIGNMENT.LEFT
 
         # Header row styling
         hdr = t.rows[0].cells
