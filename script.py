@@ -64,7 +64,7 @@ THINKING_LEVEL_GEMINI = "low"        # minimal|low|high
 
 # Verifier-specific reasoning (lower = faster, still accurate for verification)
 VERIFIER_REASONING_EFFORT_OPENAI = "low"  # none|low|medium|high|xhigh
-VERIFIER_THINKING_LEVEL_GEMINI = "minimal"  # minimal|low|high
+VERIFIER_THINKING_LEVEL_GEMINI = "low"  # low|medium|high (minimal not supported)
 
 MAX_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
 TASK_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
