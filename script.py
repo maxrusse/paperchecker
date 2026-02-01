@@ -1860,14 +1860,19 @@ def run_pipeline_for_pdf(
 
     # Ensure pmid is copied to included_articles + level_of_evidence for convenience.
     pmid = (working.get("paper_id") or {}).get("pmid")
+
+    # Ensure nested structures exist
+    if "record" not in working:
+        working["record"] = {}
+    if "sheets" not in working["record"]:
+        working["record"]["sheets"] = {}
+    if working["record"]["sheets"].get("included_articles") is None:
+        working["record"]["sheets"]["included_articles"] = {}
+    if working["record"]["sheets"].get("level_of_evidence") is None:
+        working["record"]["sheets"]["level_of_evidence"] = {}
+
     if pmid is not None:
         working["record"]["sheets"]["included_articles"]["pmid"] = pmid
-        working["record"]["sheets"]["level_of_evidence"]["pmid"] = pmid
-
-    # Always keep level_of_evidence dict (even if empty).
-    if "level_of_evidence" not in working["record"]["sheets"]:
-        working["record"]["sheets"]["level_of_evidence"] = {}
-    if pmid is not None:
         working["record"]["sheets"]["level_of_evidence"]["pmid"] = pmid
 
     # Copy author/year/design if we have them.
