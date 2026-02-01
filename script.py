@@ -24,6 +24,7 @@ import urllib.parse
 import urllib.request
 from typing import Optional
 from datetime import datetime, UTC
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import fitz  # PyMuPDF
 import openpyxl
@@ -61,9 +62,14 @@ GEMINI_MODEL = "gemini-3-pro-preview"
 REASONING_EFFORT_OPENAI = "medium"   # none|low|medium|high|xhigh
 THINKING_LEVEL_GEMINI = "low"        # minimal|low|high
 
+# Verifier-specific reasoning (lower = faster, still accurate for verification)
+VERIFIER_REASONING_EFFORT_OPENAI = "low"  # none|low|medium|high|xhigh
+VERIFIER_THINKING_LEVEL_GEMINI = "minimal"  # minimal|low|high
+
 MAX_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
 TASK_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
 VERIFIER_CHUNK_SIZE = 24
+VERIFIER_PARALLEL_WORKERS = 3  # Number of parallel verification chunks
 LLM_MAX_RETRIES = 3
 LLM_BACKOFF_SECONDS = 2.0
 LLM_BACKOFF_JITTER = 0.25
@@ -1189,6 +1195,39 @@ def gemini_json(gclient, system_text, user_text, schema):
     return _call_with_retries(_call, "Gemini call")
 
 
+# Verifier-specific LLM functions (use lower reasoning for faster verification)
+def openai_json_verifier(oai_client, system_text, user_text, schema, schema_name):
+    def _call():
+        resp = oai_client.responses.create(
+            model=OPENAI_MODEL,
+            reasoning={"effort": VERIFIER_REASONING_EFFORT_OPENAI},
+            input=[
+                {"role": "system", "content": system_text},
+                {"role": "user", "content": user_text},
+            ],
+            text={"format": {"type": "json_schema", "name": schema_name, "schema": schema, "strict": True}},
+        )
+        return json.loads(resp.output_text)
+    return _call_with_retries(_call, f"OpenAI verifier ({schema_name})")
+
+
+def gemini_json_verifier(gclient, system_text, user_text, schema):
+    def _call():
+        resp = gclient.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_text,
+            config=types.GenerateContentConfig(
+                system_instruction=system_text,
+                response_mime_type="application/json",
+                response_json_schema=schema,
+                thinking_config=types.ThinkingConfig(thinking_level=VERIFIER_THINKING_LEVEL_GEMINI),
+                temperature=0.0,
+            ),
+        )
+        return json.loads(resp.text)
+    return _call_with_retries(_call, "Gemini verifier")
+
+
 # -------------------------
 # DECISION UTILITIES
 # -------------------------
@@ -1207,6 +1246,54 @@ def decisions_only_non_null(decisions):
 
 def chunk_list(xs, n):
     return [xs[i:i+n] for i in range(0, len(xs), n)]
+
+
+def group_decisions_by_page(decisions, max_chunk_size=VERIFIER_CHUNK_SIZE):
+    """Group decisions by page for more efficient verification.
+
+    Decisions on the same pages are grouped together, then split into chunks
+    that don't exceed max_chunk_size. This ensures the verifier gets focused
+    context (only relevant pages) for each chunk.
+    """
+    # Group by page (None pages go together)
+    by_page = {}
+    for d in decisions:
+        page = d.get("page")
+        by_page.setdefault(page, []).append(d)
+
+    # Build chunks: try to keep same-page decisions together
+    chunks = []
+    current_chunk = []
+    current_pages = set()
+
+    # Process decisions page by page, sorted by page number (None last)
+    sorted_pages = sorted(by_page.keys(), key=lambda p: (p is None, p or 0))
+
+    for page in sorted_pages:
+        page_decisions = by_page[page]
+
+        # If adding all decisions from this page would exceed limit, flush first
+        if current_chunk and len(current_chunk) + len(page_decisions) > max_chunk_size:
+            chunks.append(current_chunk)
+            current_chunk = []
+            current_pages = set()
+
+        # Add decisions from this page (may need to split if too many on one page)
+        for d in page_decisions:
+            current_chunk.append(d)
+            if page is not None:
+                current_pages.add(page)
+
+            if len(current_chunk) >= max_chunk_size:
+                chunks.append(current_chunk)
+                current_chunk = []
+                current_pages = set()
+
+    # Don't forget the last chunk
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
 
 
 # -------------------------
@@ -1244,7 +1331,7 @@ def gemini_verify_chunk(gclient, view_text, driver_json, decisions_to_review):
         + "\n\nDECISIONS_TO_REVIEW:\n"
         + json.dumps(decisions_to_review, ensure_ascii=True)
     )
-    return gemini_json(gclient, VERIFIER_SYSTEM, user_text, VERIFIER_SCHEMA)
+    return gemini_json_verifier(gclient, VERIFIER_SYSTEM, user_text, VERIFIER_SCHEMA)
 
 def openai_verify_chunk(oai_client, view_text, driver_json, decisions_to_review):
     user_text = (
@@ -1255,7 +1342,7 @@ def openai_verify_chunk(oai_client, view_text, driver_json, decisions_to_review)
         + "\n\nDECISIONS_TO_REVIEW:\n"
         + json.dumps(decisions_to_review, ensure_ascii=True)
     )
-    return openai_json(oai_client, VERIFIER_SYSTEM, user_text, VERIFIER_SCHEMA, "mronj_verifier_v2")
+    return openai_json_verifier(oai_client, VERIFIER_SYSTEM, user_text, VERIFIER_SCHEMA, "mronj_verifier_v2")
 
 
 # -------------------------
@@ -1707,31 +1794,66 @@ def run_pipeline_for_pdf(
     verifier_fn = openai_verify_chunk if use_openai_verifier else gemini_verify_chunk
     verifier_model = OPENAI_MODEL if use_openai_verifier else GEMINI_MODEL
 
-    verifier_passes = []
+    # Chunk decisions for parallel processing
     chunks = chunk_list(decisions_non_null, VERIFIER_CHUNK_SIZE)
     total_chunks = len(chunks)
     total_decisions = len(decisions_non_null)
-    for idx, ch in enumerate(chunks, 1):
-        start_idx = (idx - 1) * VERIFIER_CHUNK_SIZE + 1
-        end_idx = min(idx * VERIFIER_CHUNK_SIZE, total_decisions)
+
+    # Prepare working JSON once (immutable during parallel verification)
+    working_json = sanitize_for_model_input(working)
+
+    def verify_chunk(idx_and_chunk):
+        """Process a single verification chunk (for parallel execution)."""
+        idx, ch = idx_and_chunk
         page_numbers = sorted({d.get("page") for d in ch if d.get("page") is not None})
-        page_hint = f" pages={page_numbers}" if page_numbers else ""
-        _progress(
-            progress_fn,
-            f"Verifier chunk {idx}/{total_chunks}: decisions {start_idx}-{end_idx} of {total_decisions}.{page_hint}",
-        )
         verifier_pages = _select_pages(full_pages, page_numbers)
         verifier_view = build_verifier_view(verifier_pages, ch)
         vpass = verifier_fn(
             oai_client if use_openai_verifier else gclient,
             verifier_view,
-            sanitize_for_model_input(working),
+            working_json,
             ch,
         )
-        verifier_passes.append(vpass)
-        patch = vpass.get("suggested_patch")
-        if isinstance(patch, dict) and patch:
-            working = deep_merge(working, patch)
+        return (idx, vpass)
+
+    # Process chunks in parallel for efficiency
+    verifier_passes = [None] * total_chunks
+    num_workers = min(VERIFIER_PARALLEL_WORKERS, total_chunks)
+
+    if total_chunks == 1:
+        # Single chunk - no threading overhead needed
+        page_numbers = sorted({d.get("page") for d in chunks[0] if d.get("page") is not None})
+        page_hint = f" pages={page_numbers}" if page_numbers else ""
+        _progress(progress_fn, f"Verifier: 1 chunk, {total_decisions} decisions.{page_hint}")
+        _, vpass = verify_chunk((0, chunks[0]))
+        verifier_passes[0] = vpass
+    else:
+        # Multiple chunks - process in parallel
+        _progress(progress_fn, f"Verifier: {total_chunks} chunks, {num_workers} parallel workers.")
+
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {
+                executor.submit(verify_chunk, (idx, ch)): idx
+                for idx, ch in enumerate(chunks)
+            }
+            completed = 0
+            for future in as_completed(futures):
+                idx, vpass = future.result()
+                verifier_passes[idx] = vpass
+                completed += 1
+                page_numbers = sorted({d.get("page") for d in chunks[idx] if d.get("page") is not None})
+                page_hint = f" pages={page_numbers}" if page_numbers else ""
+                _progress(
+                    progress_fn,
+                    f"Verifier chunk {completed}/{total_chunks} done.{page_hint}",
+                )
+
+    # Apply all patches sequentially (order matters for overlapping corrections)
+    for vpass in verifier_passes:
+        if vpass:
+            patch = vpass.get("suggested_patch")
+            if isinstance(patch, dict) and patch:
+                working = deep_merge(working, patch)
 
     final_obj = build_final_object(working, verifier_passes, decisions_non_null, verifier_model=verifier_model)
 
