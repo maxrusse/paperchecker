@@ -47,12 +47,12 @@ from paperchecker_utils import (
 # -------------------------
 PDF_PATHS = [
     # Example:
-    # "/mnt/data/paper1.pdf",
+    # "papers/paper1.pdf",
 ]
 
 TEMPLATE_XLSX = None  # Auto-generated from EXCEL_MAP structure (set path to use custom template)
-OUT_XLSX = f"/mnt/data/mronj_prevention_filled_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.xlsx"
-OUT_DOCX = f"/mnt/data/mronj_prevention_review_log_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.docx"
+OUT_XLSX = f"output/mronj_extraction_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.xlsx"
+OUT_DOCX = f"output/mronj_review_log_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.docx"
 
 # Models (keep as placeholders; set to models you have access to)
 OPENAI_MODEL = "gpt-5.2"
