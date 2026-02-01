@@ -1559,6 +1559,9 @@ def rule_validation(final_obj):
     if not isinstance(inc, dict):
         return issues
 
+    def _is_empty(value):
+        return value in (None, "")
+
     # MRONJ development must be Yes/No/null (template validation).
     mdev = inc.get("mronj_development")
     if mdev not in (None, "Yes", "No"):
@@ -1569,6 +1572,41 @@ def rule_validation(final_obj):
     route_any = any(inc.get(k) == 1 for k in ("route_iv", "route_oral", "route_im", "route_subcutaneous", "route_both"))
     if route_nr and route_any:
         issues.append({"severity": "WARN", "code": "ROUTE_NR_CONFLICT", "message": "route_not_reported is set but other route flags are also set.", "path": "/record/sheets/included_articles"})
+
+    n_pts = inc.get("n_pts")
+    male_n = inc.get("gender_male_n")
+    female_n = inc.get("gender_female_n")
+    if not _is_empty(n_pts):
+        if _is_empty(male_n):
+            issues.append({
+                "severity": "WARN",
+                "code": "MISSING_GENDER_MALE",
+                "message": "Total patient count is present, but male count is missing.",
+                "path": "/record/sheets/included_articles/gender_male_n",
+            })
+        if _is_empty(female_n):
+            issues.append({
+                "severity": "WARN",
+                "code": "MISSING_GENDER_FEMALE",
+                "message": "Total patient count is present, but female count is missing.",
+                "path": "/record/sheets/included_articles/gender_female_n",
+            })
+        if not _is_empty(male_n) and not _is_empty(female_n):
+            try:
+                if int(male_n) + int(female_n) != int(n_pts):
+                    issues.append({
+                        "severity": "WARN",
+                        "code": "GENDER_COUNT_MISMATCH",
+                        "message": "Male + female count does not match total patient count.",
+                        "path": "/record/sheets/included_articles/n_pts",
+                    })
+            except (TypeError, ValueError):
+                issues.append({
+                    "severity": "WARN",
+                    "code": "GENDER_COUNT_NON_NUMERIC",
+                    "message": "Male, female, or total patient counts are non-numeric.",
+                    "path": "/record/sheets/included_articles/n_pts",
+                })
 
     return issues
 
