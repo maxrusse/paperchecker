@@ -1646,35 +1646,206 @@ def run_pipeline_for_pdf(
     _progress(progress_fn, f"Starting PDF: {pdf_path}")
     full_pages = extract_pdf_pages(pdf_path)
 
-    working = _init_working_object()
-    task_results = []
+    verifier_fn = openai_verify_chunk if use_openai_verifier else gemini_verify_chunk
+    verifier_model = OPENAI_MODEL if use_openai_verifier else GEMINI_MODEL
 
-    # ---- TASK 1: Metadata + study design classification + evidence level ----
-    _progress(progress_fn, "Task 1/5: metadata + design + evidence level...")
-    view1 = make_task_view(full_pages, keywords=["pmid", "doi", "random", "cohort", "case", "systematic review", "methods", "abstract", "level of evidence", "grade", "recommendation", "oxford", "sign", "grade"])
-    allowed_inc_keys = ["pmid", "author", "year", "study_design"]
-    allowed_lev_keys = ["level_of_evidence", "grade_of_recommendation"]
-    schema1 = build_task_schema(
-        task_name="meta_design",
-        allowed_sheet_key=None,  # Allow both sheets
-        allowed_included_keys=allowed_inc_keys,
-        allowed_level_keys=allowed_lev_keys,
-    )
-    fields_text = (
-        "- paper_id: pmid/doi/title\n"
-        "- study_type: one of " + "|".join(STUDY_TYPE_ENUM) + "\n"
-        "- included_articles: " + ", ".join(allowed_inc_keys) + "\n"
-        "- level_of_evidence: level_of_evidence (e.g. '1a', '2b', 'III'), grade_of_recommendation (e.g. 'A', 'B', 'C') - extract if explicitly stated using Oxford/SIGN/GRADE/AWMF or similar framework"
-    )
-    user1 = _task_user("meta_design", fields_text, view1, context_json=None)
+    def run_driver(task_name, schema, user_prompt, schema_name):
+        """Run extraction for a task."""
+        if use_gemini_driver:
+            return gemini_json(gclient, TASK_SYSTEM, user_prompt, schema)
+        else:
+            return openai_json(oai_client, TASK_SYSTEM, user_prompt, schema, schema_name)
 
-    if use_gemini_driver:
-        r1 = gemini_json(gclient, TASK_SYSTEM, user1, schema1)
+    def verify_decisions(task_result, working_snapshot):
+        """Verify decisions from a single task result immediately."""
+        decisions = decisions_only_non_null(task_result.get("decisions") or [])
+        if not decisions:
+            return []
+
+        verifier_passes = []
+        chunks = chunk_list(decisions, VERIFIER_CHUNK_SIZE)
+        working_json = sanitize_for_model_input(working_snapshot)
+
+        for ch in chunks:
+            page_numbers = sorted({d.get("page") for d in ch if d.get("page") is not None})
+            verifier_pages = _select_pages(full_pages, page_numbers)
+            verifier_view = build_verifier_view(verifier_pages, ch)
+            vpass = verifier_fn(
+                oai_client if use_openai_verifier else gclient,
+                verifier_view,
+                working_json,
+                ch,
+            )
+            verifier_passes.append(vpass)
+        return verifier_passes
+
+    def run_task_with_verify(task_num, task_name, view_keywords, allowed_keys, schema_name,
+                             fields_text, sheet_key="included_articles", allowed_level_keys=None):
+        """Run a single task: extract + verify immediately. Returns (task_result, verifier_passes, patch)."""
+        _progress(progress_fn, f"Task {task_num}: {task_name} starting...")
+
+        view = make_task_view(full_pages, keywords=view_keywords)
+        if allowed_level_keys:
+            schema = build_task_schema(task_name=task_name, allowed_sheet_key=None,
+                                       allowed_included_keys=allowed_keys, allowed_level_keys=allowed_level_keys)
+        else:
+            schema = build_task_schema(task_name=task_name, allowed_sheet_key=sheet_key,
+                                       allowed_included_keys=allowed_keys)
+
+        user_prompt = _task_user(task_name, fields_text, view, context_json=None)
+        task_result = run_driver(task_name, schema, user_prompt, schema_name)
+
+        _progress(progress_fn, f"Task {task_num}: {task_name} extracted, verifying...")
+
+        # Build a minimal working object for verification context
+        working_snapshot = _init_working_object()
+        working_snapshot = _apply_patch(working_snapshot, task_result.get("patch"))
+
+        verifier_passes = verify_decisions(task_result, working_snapshot)
+        _progress(progress_fn, f"Task {task_num}: {task_name} done.")
+
+        return (task_result, verifier_passes, task_result.get("patch"))
+
+    # ---- Define all tasks ----
+    task1_config = {
+        "task_num": "1/5", "task_name": "meta_design",
+        "view_keywords": ["pmid", "doi", "random", "cohort", "case", "systematic review", "methods", "abstract", "level of evidence", "grade", "recommendation", "oxford", "sign", "grade"],
+        "allowed_keys": ["pmid", "author", "year", "study_design"],
+        "allowed_level_keys": ["level_of_evidence", "grade_of_recommendation"],
+        "schema_name": "mronj_task_meta_design",
+        "fields_text": (
+            "- paper_id: pmid/doi/title\n"
+            "- study_type: one of " + "|".join(STUDY_TYPE_ENUM) + "\n"
+            "- included_articles: pmid, author, year, study_design\n"
+            "- level_of_evidence: level_of_evidence (e.g. '1a', '2b', 'III'), grade_of_recommendation (e.g. 'A', 'B', 'C') - extract if explicitly stated using Oxford/SIGN/GRADE/AWMF or similar framework"
+        ),
+    }
+
+    task2_config = {
+        "task_num": "2/5", "task_name": "population",
+        "view_keywords": ["participants", "patients", "sample", "n=", "mean age", "male", "female", "table 1"],
+        "allowed_keys": ["n_pts", "age_mean_years", "gender_male_n", "gender_female_n"],
+        "schema_name": "mronj_task_population",
+        "fields_text": "- included_articles: n_pts, age_mean_years, gender_male_n, gender_female_n",
+    }
+
+    task3_config = {
+        "task_num": "3/5", "task_name": "indication_drugs_route_site",
+        "view_keywords": ["breast", "prostate", "myeloma", "osteoporosis", "zoled", "pamid", "alend", "rised", "iband", "etid", "clodron", "denos", "intraven", "oral", "subcut", "mandible", "maxilla"],
+        "allowed_keys": [
+            "site_maxilla","site_mandible","site_both",
+            "primary_cause_breast_cancer","primary_cause_prostate_cancer","primary_cause_mm","primary_cause_osteoporosis","primary_cause_other",
+            "ards_bisphosphonates_zoledronate","ards_bisphosphonates_pamidronate","ards_bisphosphonates_risedronate","ards_bisphosphonates_alendronate",
+            "ards_bisphosphonates_ibandronate","ards_bisphosphonates_combination","ards_bisphosphonates_etidronate","ards_bisphosphonates_clodronate",
+            "ards_bisphosphonates_unknown_other","ards_denosumab","ards_both",
+            "route_iv","route_oral","route_im","route_subcutaneous","route_both","route_not_reported",
+        ],
+        "schema_name": "mronj_task_indication_drugs",
+        "fields_text": "- included_articles (flags): site_maxilla, site_mandible, site_both, primary_cause_*, ards_bisphosphonates_*, ards_denosumab, ards_both, route_*",
+    }
+
+    task4_config = {
+        "task_num": "4/5", "task_name": "intervention_outcomes",
+        "view_keywords": ["prevention", "dental", "extraction", "antibiotic", "photodynamic", "chlorhexidine", "follow-up", "months", "outcome", "mronj", "osteonecrosis"],
+        "allowed_keys": [
+            "mronj_stage_at_risk","mronj_stage_0",
+            "prevention_technique","group_intervention","group_control",
+            "follow_up_mean_months","follow_up_range","outcome_variable","mronj_development","mronj_development_details",
+        ],
+        "schema_name": "mronj_task_outcomes",
+        "fields_text": "- included_articles: mronj_stage_at_risk, mronj_stage_0, prevention_technique, group_intervention, group_control, follow_up_mean_months, follow_up_range, outcome_variable, mronj_development, mronj_development_details",
+    }
+
+    # ---- Run Tasks 1-4 in parallel (each with immediate verification) ----
+    _progress(progress_fn, "Running tasks 1-4 in parallel...")
+
+    all_task_results = []
+    all_verifier_passes = []
+    all_patches = []
+    task1_result = None  # Need this for Task 5's study_type
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future_task1 = executor.submit(
+            run_task_with_verify, task1_config["task_num"], task1_config["task_name"],
+            task1_config["view_keywords"], task1_config["allowed_keys"], task1_config["schema_name"],
+            task1_config["fields_text"], None, task1_config["allowed_level_keys"]
+        )
+        future_task2 = executor.submit(
+            run_task_with_verify, task2_config["task_num"], task2_config["task_name"],
+            task2_config["view_keywords"], task2_config["allowed_keys"], task2_config["schema_name"],
+            task2_config["fields_text"]
+        )
+        future_task3 = executor.submit(
+            run_task_with_verify, task3_config["task_num"], task3_config["task_name"],
+            task3_config["view_keywords"], task3_config["allowed_keys"], task3_config["schema_name"],
+            task3_config["fields_text"]
+        )
+        future_task4 = executor.submit(
+            run_task_with_verify, task4_config["task_num"], task4_config["task_name"],
+            task4_config["view_keywords"], task4_config["allowed_keys"], task4_config["schema_name"],
+            task4_config["fields_text"]
+        )
+
+        # Collect results
+        task1_result, task1_vpasses, task1_patch = future_task1.result()
+        all_task_results.append(task1_result)
+        all_verifier_passes.extend(task1_vpasses)
+        all_patches.append(task1_patch)
+
+        task2_result, task2_vpasses, task2_patch = future_task2.result()
+        all_task_results.append(task2_result)
+        all_verifier_passes.extend(task2_vpasses)
+        all_patches.append(task2_patch)
+
+        task3_result, task3_vpasses, task3_patch = future_task3.result()
+        all_task_results.append(task3_result)
+        all_verifier_passes.extend(task3_vpasses)
+        all_patches.append(task3_patch)
+
+        task4_result, task4_vpasses, task4_patch = future_task4.result()
+        all_task_results.append(task4_result)
+        all_verifier_passes.extend(task4_vpasses)
+        all_patches.append(task4_patch)
+
+    # ---- Task 5: Critical appraisal (needs study_type from Task 1) ----
+    # Get study_type from task1 result
+    task1_patch_obj = task1_patch or {}
+    study_type = task1_patch_obj.get("study_type") or "unclear"
+
+    if study_type in ("rct", "cohort", "case_series", "case_control", "systematic_review"):
+        _progress(progress_fn, f"Task 5/5: critical appraisal ({study_type}) starting...")
+        view5 = make_task_view(full_pages, keywords=["methods", "random", "blind", "withdraw", "confound", "follow up", "loss to follow up", "search strategy", "protocol", "meta-analysis", "risk of bias"])
+        schema5 = build_appraisal_schema(study_type)
+        fields_text = "- Fill only the appraisal sheet for study_type=" + study_type
+        user5 = _task_user("critical_appraisal", fields_text, view5, context_json=None)
+
+        task5_result = run_driver("critical_appraisal", schema5, user5, "mronj_task_appraisal")
+        _progress(progress_fn, f"Task 5/5: critical appraisal extracted, verifying...")
+
+        working5 = _init_working_object()
+        working5 = _apply_patch(working5, task5_result.get("patch"))
+        task5_vpasses = verify_decisions(task5_result, working5)
+
+        all_task_results.append(task5_result)
+        all_verifier_passes.extend(task5_vpasses)
+        all_patches.append(task5_result.get("patch"))
+        _progress(progress_fn, "Task 5/5: critical appraisal done.")
     else:
-        r1 = openai_json(oai_client, TASK_SYSTEM, user1, schema1, "mronj_task_meta_design")
+        _progress(progress_fn, "Task 5/5 skipped (study_type unclear/other).")
 
-    working = _apply_patch(working, r1.get("patch"))
-    task_results.append(r1)
+    # ---- Merge all results ----
+    _progress(progress_fn, "Merging all task results...")
+    working = _init_working_object()
+    for patch in all_patches:
+        if patch:
+            working = _apply_patch(working, patch)
+
+    # Apply verifier corrections
+    for vpass in all_verifier_passes:
+        if vpass:
+            patch = vpass.get("suggested_patch")
+            if isinstance(patch, dict) and patch:
+                working = deep_merge(working, patch)
 
     # Optional PMID lookup via PubMed if missing.
     if ENABLE_PUBMED_LOOKUP and not (working.get("paper_id") or {}).get("pmid"):
@@ -1693,169 +1864,23 @@ def run_pipeline_for_pdf(
         working["record"]["sheets"]["included_articles"]["pmid"] = pmid
         working["record"]["sheets"]["level_of_evidence"]["pmid"] = pmid
 
-    # ---- TASK 2: Population ----
-    _progress(progress_fn, "Task 2/5: population...")
-    view2 = make_task_view(full_pages, keywords=["participants", "patients", "sample", "n=", "mean age", "male", "female", "table 1"])
-    allowed_keys = ["n_pts", "age_mean_years", "gender_male_n", "gender_female_n"]
-    schema2 = build_task_schema(
-        task_name="population",
-        allowed_sheet_key="included_articles",
-        allowed_included_keys=allowed_keys,
-    )
-    fields_text = "- included_articles: " + ", ".join(allowed_keys)
-    user2 = _task_user("population", fields_text, view2, context_json=sanitize_for_model_input(working))
-    if use_gemini_driver:
-        r2 = gemini_json(gclient, TASK_SYSTEM, user2, schema2)
-    else:
-        r2 = openai_json(oai_client, TASK_SYSTEM, user2, schema2, "mronj_task_population")
-    working = _apply_patch(working, r2.get("patch"))
-    task_results.append(r2)
-
-    # ---- TASK 3: Indication + drugs + route + site ----
-    _progress(progress_fn, "Task 3/5: indication + drugs + route + site...")
-    view3 = make_task_view(full_pages, keywords=["breast", "prostate", "myeloma", "osteoporosis", "zoled", "pamid", "alend", "rised", "iband", "etid", "clodron", "denos", "intraven", "oral", "subcut", "mandible", "maxilla"])
-    allowed_keys = [
-        "site_maxilla","site_mandible","site_both",
-        "primary_cause_breast_cancer","primary_cause_prostate_cancer","primary_cause_mm","primary_cause_osteoporosis","primary_cause_other",
-        "ards_bisphosphonates_zoledronate","ards_bisphosphonates_pamidronate","ards_bisphosphonates_risedronate","ards_bisphosphonates_alendronate",
-        "ards_bisphosphonates_ibandronate","ards_bisphosphonates_combination","ards_bisphosphonates_etidronate","ards_bisphosphonates_clodronate",
-        "ards_bisphosphonates_unknown_other","ards_denosumab","ards_both",
-        "route_iv","route_oral","route_im","route_subcutaneous","route_both","route_not_reported",
-    ]
-    schema3 = build_task_schema(
-        task_name="indication_drugs_route_site",
-        allowed_sheet_key="included_articles",
-        allowed_included_keys=allowed_keys,
-    )
-    fields_text = "- included_articles (flags): " + ", ".join(allowed_keys)
-    user3 = _task_user("indication_drugs_route_site", fields_text, view3, context_json=sanitize_for_model_input(working))
-    if use_gemini_driver:
-        r3 = gemini_json(gclient, TASK_SYSTEM, user3, schema3)
-    else:
-        r3 = openai_json(oai_client, TASK_SYSTEM, user3, schema3, "mronj_task_indication_drugs")
-    working = _apply_patch(working, r3.get("patch"))
-    task_results.append(r3)
-
-    # ---- TASK 4: Intervention + follow-up + outcomes ----
-    _progress(progress_fn, "Task 4/5: intervention + outcomes...")
-    view4 = make_task_view(full_pages, keywords=["prevention", "dental", "extraction", "antibiotic", "photodynamic", "chlorhexidine", "follow-up", "months", "outcome", "mronj", "osteonecrosis"])
-    allowed_keys = [
-        "mronj_stage_at_risk","mronj_stage_0",
-        "prevention_technique","group_intervention","group_control",
-        "follow_up_mean_months","follow_up_range","outcome_variable","mronj_development","mronj_development_details",
-    ]
-    schema4 = build_task_schema(
-        task_name="intervention_outcomes",
-        allowed_sheet_key="included_articles",
-        allowed_included_keys=allowed_keys,
-    )
-    fields_text = "- included_articles: " + ", ".join(allowed_keys)
-    user4 = _task_user("intervention_outcomes", fields_text, view4, context_json=sanitize_for_model_input(working))
-    if use_gemini_driver:
-        r4 = gemini_json(gclient, TASK_SYSTEM, user4, schema4)
-    else:
-        r4 = openai_json(oai_client, TASK_SYSTEM, user4, schema4, "mronj_task_outcomes")
-    working = _apply_patch(working, r4.get("patch"))
-    task_results.append(r4)
-
-    # ---- TASK 5: Critical appraisal (study-type specific) ----
-    study_type = working.get("study_type") or "unclear"
-    if study_type in ("rct", "cohort", "case_series", "case_control", "systematic_review"):
-        _progress(progress_fn, f"Task 5/5: critical appraisal ({study_type})...")
-        view5 = make_task_view(full_pages, keywords=["methods", "random", "blind", "withdraw", "confound", "follow up", "loss to follow up", "search strategy", "protocol", "meta-analysis", "risk of bias"])
-        schema5 = build_appraisal_schema(study_type)
-        fields_text = "- Fill only the appraisal sheet for study_type=" + study_type
-        user5 = _task_user("critical_appraisal", fields_text, view5, context_json=sanitize_for_model_input(working))
-        if use_gemini_driver:
-            r5 = gemini_json(gclient, TASK_SYSTEM, user5, schema5)
-        else:
-            r5 = openai_json(oai_client, TASK_SYSTEM, user5, schema5, "mronj_task_appraisal")
-        working = _apply_patch(working, r5.get("patch"))
-        task_results.append(r5)
-    else:
-        _progress(progress_fn, "Task 5/5 skipped (study_type unclear/other).")
-
     # Always keep level_of_evidence dict (even if empty).
     if "level_of_evidence" not in working["record"]["sheets"]:
         working["record"]["sheets"]["level_of_evidence"] = {}
-    working["record"]["sheets"]["level_of_evidence"]["pmid"] = pmid
+    if pmid is not None:
+        working["record"]["sheets"]["level_of_evidence"]["pmid"] = pmid
+
     # Copy author/year/design if we have them.
     inc = working["record"]["sheets"].get("included_articles") or {}
     for k in ("author", "year", "study_design"):
         if inc.get(k) not in (None, ""):
             working["record"]["sheets"]["level_of_evidence"][k] = inc.get(k)
 
-    # Collect decisions to verify: only non-null.
-    decisions = _collect_decisions(task_results)
-    decisions_non_null = decisions_only_non_null(decisions)
+    # Collect all decisions for final object
+    all_decisions = _collect_decisions(all_task_results)
+    decisions_non_null = decisions_only_non_null(all_decisions)
 
-    _progress(progress_fn, f"Verifier: reviewing {len(decisions_non_null)} non-null decision(s).")
-
-    verifier_fn = openai_verify_chunk if use_openai_verifier else gemini_verify_chunk
-    verifier_model = OPENAI_MODEL if use_openai_verifier else GEMINI_MODEL
-
-    # Chunk decisions for parallel processing
-    chunks = chunk_list(decisions_non_null, VERIFIER_CHUNK_SIZE)
-    total_chunks = len(chunks)
-    total_decisions = len(decisions_non_null)
-
-    # Prepare working JSON once (immutable during parallel verification)
-    working_json = sanitize_for_model_input(working)
-
-    def verify_chunk(idx_and_chunk):
-        """Process a single verification chunk (for parallel execution)."""
-        idx, ch = idx_and_chunk
-        page_numbers = sorted({d.get("page") for d in ch if d.get("page") is not None})
-        verifier_pages = _select_pages(full_pages, page_numbers)
-        verifier_view = build_verifier_view(verifier_pages, ch)
-        vpass = verifier_fn(
-            oai_client if use_openai_verifier else gclient,
-            verifier_view,
-            working_json,
-            ch,
-        )
-        return (idx, vpass)
-
-    # Process chunks in parallel for efficiency
-    verifier_passes = [None] * total_chunks
-    num_workers = min(VERIFIER_PARALLEL_WORKERS, total_chunks)
-
-    if total_chunks == 1:
-        # Single chunk - no threading overhead needed
-        page_numbers = sorted({d.get("page") for d in chunks[0] if d.get("page") is not None})
-        page_hint = f" pages={page_numbers}" if page_numbers else ""
-        _progress(progress_fn, f"Verifier: 1 chunk, {total_decisions} decisions.{page_hint}")
-        _, vpass = verify_chunk((0, chunks[0]))
-        verifier_passes[0] = vpass
-    else:
-        # Multiple chunks - process in parallel
-        _progress(progress_fn, f"Verifier: {total_chunks} chunks, {num_workers} parallel workers.")
-
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = {
-                executor.submit(verify_chunk, (idx, ch)): idx
-                for idx, ch in enumerate(chunks)
-            }
-            completed = 0
-            for future in as_completed(futures):
-                idx, vpass = future.result()
-                verifier_passes[idx] = vpass
-                completed += 1
-                page_numbers = sorted({d.get("page") for d in chunks[idx] if d.get("page") is not None})
-                page_hint = f" pages={page_numbers}" if page_numbers else ""
-                _progress(
-                    progress_fn,
-                    f"Verifier chunk {completed}/{total_chunks} done.{page_hint}",
-                )
-
-    # Apply all patches sequentially (order matters for overlapping corrections)
-    for vpass in verifier_passes:
-        if vpass:
-            patch = vpass.get("suggested_patch")
-            if isinstance(patch, dict) and patch:
-                working = deep_merge(working, patch)
-
-    final_obj = build_final_object(working, verifier_passes, decisions_non_null, verifier_model=verifier_model)
+    final_obj = build_final_object(working, all_verifier_passes, decisions_non_null, verifier_model=verifier_model)
 
     _progress(progress_fn, "Writing Excel + Word outputs...")
     apply_to_workbook(final_obj, template_xlsx, out_xlsx, EXCEL_MAP, clear_existing_data=clear_existing_data)
