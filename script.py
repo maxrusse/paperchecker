@@ -61,8 +61,8 @@ GEMINI_MODEL = "gemini-3-pro-preview"
 REASONING_EFFORT_OPENAI = "medium"   # none|low|medium|high|xhigh
 THINKING_LEVEL_GEMINI = "low"        # minimal|low|high
 
-MAX_VIEW_CHARS = 60000
-TASK_VIEW_CHARS = 25000
+MAX_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
+TASK_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
 VERIFIER_CHUNK_SIZE = 24
 LLM_MAX_RETRIES = 3
 LLM_BACKOFF_SECONDS = 2.0
