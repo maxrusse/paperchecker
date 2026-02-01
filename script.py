@@ -719,6 +719,15 @@ def make_task_view(pages, keywords, max_chars=TASK_VIEW_CHARS, window=1400):
         return make_global_view(pages, max_chars=max_chars)
     return joined[:max_chars]
 
+def _select_pages(pages, page_numbers):
+    if not pages:
+        return []
+    if not page_numbers:
+        return pages
+    page_set = set(page_numbers)
+    subset = [p for p in pages if p.get("page_index") in page_set]
+    return subset or pages
+
 
 DECISION_KEYWORDS = {
     "pmid": ["pmid"],
@@ -1548,14 +1557,14 @@ def run_pipeline_for_pdf(
     clear_existing_data=False,
 ):
     _progress(progress_fn, f"Starting PDF: {pdf_path}")
-    pages = extract_pdf_pages(pdf_path)
+    full_pages = extract_pdf_pages(pdf_path)
 
     working = _init_working_object()
     task_results = []
 
     # ---- TASK 1: Metadata + study design classification + evidence level ----
     _progress(progress_fn, "Task 1/5: metadata + design + evidence level...")
-    view1 = make_task_view(pages, keywords=["pmid", "doi", "random", "cohort", "case", "systematic review", "methods", "abstract", "level of evidence", "grade", "recommendation", "oxford", "sign", "grade"])
+    view1 = make_task_view(full_pages, keywords=["pmid", "doi", "random", "cohort", "case", "systematic review", "methods", "abstract", "level of evidence", "grade", "recommendation", "oxford", "sign", "grade"])
     allowed_inc_keys = ["pmid", "author", "year", "study_design"]
     allowed_lev_keys = ["level_of_evidence", "grade_of_recommendation"]
     schema1 = build_task_schema(
@@ -1599,7 +1608,7 @@ def run_pipeline_for_pdf(
 
     # ---- TASK 2: Population ----
     _progress(progress_fn, "Task 2/5: population...")
-    view2 = make_task_view(pages, keywords=["participants", "patients", "sample", "n=", "mean age", "male", "female", "table 1"])
+    view2 = make_task_view(full_pages, keywords=["participants", "patients", "sample", "n=", "mean age", "male", "female", "table 1"])
     allowed_keys = ["n_pts", "age_mean_years", "gender_male_n", "gender_female_n"]
     schema2 = build_task_schema(
         task_name="population",
@@ -1617,7 +1626,7 @@ def run_pipeline_for_pdf(
 
     # ---- TASK 3: Indication + drugs + route + site ----
     _progress(progress_fn, "Task 3/5: indication + drugs + route + site...")
-    view3 = make_task_view(pages, keywords=["breast", "prostate", "myeloma", "osteoporosis", "zoled", "pamid", "alend", "rised", "iband", "etid", "clodron", "denos", "intraven", "oral", "subcut", "mandible", "maxilla"])
+    view3 = make_task_view(full_pages, keywords=["breast", "prostate", "myeloma", "osteoporosis", "zoled", "pamid", "alend", "rised", "iband", "etid", "clodron", "denos", "intraven", "oral", "subcut", "mandible", "maxilla"])
     allowed_keys = [
         "site_maxilla","site_mandible","site_both",
         "primary_cause_breast_cancer","primary_cause_prostate_cancer","primary_cause_mm","primary_cause_osteoporosis","primary_cause_other",
@@ -1642,7 +1651,7 @@ def run_pipeline_for_pdf(
 
     # ---- TASK 4: Intervention + follow-up + outcomes ----
     _progress(progress_fn, "Task 4/5: intervention + outcomes...")
-    view4 = make_task_view(pages, keywords=["prevention", "dental", "extraction", "antibiotic", "photodynamic", "chlorhexidine", "follow-up", "months", "outcome", "mronj", "osteonecrosis"])
+    view4 = make_task_view(full_pages, keywords=["prevention", "dental", "extraction", "antibiotic", "photodynamic", "chlorhexidine", "follow-up", "months", "outcome", "mronj", "osteonecrosis"])
     allowed_keys = [
         "mronj_stage_at_risk","mronj_stage_0",
         "prevention_technique","group_intervention","group_control",
@@ -1666,7 +1675,7 @@ def run_pipeline_for_pdf(
     study_type = working.get("study_type") or "unclear"
     if study_type in ("rct", "cohort", "case_series", "case_control", "systematic_review"):
         _progress(progress_fn, f"Task 5/5: critical appraisal ({study_type})...")
-        view5 = make_task_view(pages, keywords=["methods", "random", "blind", "withdraw", "confound", "follow up", "loss to follow up", "search strategy", "protocol", "meta-analysis", "risk of bias"])
+        view5 = make_task_view(full_pages, keywords=["methods", "random", "blind", "withdraw", "confound", "follow up", "loss to follow up", "search strategy", "protocol", "meta-analysis", "risk of bias"])
         schema5 = build_appraisal_schema(study_type)
         fields_text = "- Fill only the appraisal sheet for study_type=" + study_type
         user5 = _task_user("critical_appraisal", fields_text, view5, context_json=sanitize_for_model_input(working))
@@ -1705,13 +1714,14 @@ def run_pipeline_for_pdf(
     for idx, ch in enumerate(chunks, 1):
         start_idx = (idx - 1) * VERIFIER_CHUNK_SIZE + 1
         end_idx = min(idx * VERIFIER_CHUNK_SIZE, total_decisions)
-        pages = sorted({d.get("page") for d in ch if d.get("page") is not None})
-        page_hint = f" pages={pages}" if pages else ""
+        page_numbers = sorted({d.get("page") for d in ch if d.get("page") is not None})
+        page_hint = f" pages={page_numbers}" if page_numbers else ""
         _progress(
             progress_fn,
             f"Verifier chunk {idx}/{total_chunks}: decisions {start_idx}-{end_idx} of {total_decisions}.{page_hint}",
         )
-        verifier_view = build_verifier_view(pages, ch)
+        verifier_pages = _select_pages(full_pages, page_numbers)
+        verifier_view = build_verifier_view(verifier_pages, ch)
         vpass = verifier_fn(
             oai_client if use_openai_verifier else gclient,
             verifier_view,
