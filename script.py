@@ -299,6 +299,21 @@ def deep_merge(a, b):
             out[k] = copy.deepcopy(v)
     return out
 
+def deep_merge_non_null(a, b):
+    if b is None:
+        return copy.deepcopy(a)
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return copy.deepcopy(b)
+    out = copy.deepcopy(a)
+    for k, v in b.items():
+        if v is None:
+            continue
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = deep_merge_non_null(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
 def sanitize_for_model_input(obj):
     if not isinstance(obj, dict):
         return obj
@@ -1147,17 +1162,34 @@ def _optionalize_object_schema(s: dict) -> dict:
 
 
 def _suggested_patch_schema():
-    """Build schema for verifier suggested_patch that satisfies OpenAI strict mode."""
-    # Helper for Y/N/U/A enum fields used in appraisal sheets
+    """
+    suggested_patch is ALWAYS an object (never null) so we avoid object|null unions
+    that can break OpenAI's strict schema validation.
+
+    In strict mode, every object must have required lists that include every property.
+    The verifier should set unchanged fields to null and corrected fields to non-null.
+    """
     def y_schema():
         return {"type": ["string", "null"], "enum": APPRAISAL_YNUA_ENUM + [None]}
 
-    # Optional versions of main sheet schemas
-    inc_opt = _optionalize_object_schema(_sheet_schema_included_articles_partial())
-    lev_opt = _optionalize_object_schema(_sheet_schema_level_of_evidence_partial())
+    paper_id_obj = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["pmid", "doi", "title"],
+        "properties": {
+            "pmid": {"type": ["integer", "null"]},
+            "doi": {"type": ["string", "null"]},
+            "title": {"type": ["string", "null"]},
+        },
+    }
 
-    # Appraisal sheet optional schemas (all fields optional)
-    rct_opt = {
+    included_articles_obj = copy.deepcopy(_sheet_schema_included_articles_partial())
+    included_articles_obj["required"] = list(included_articles_obj.get("properties", {}).keys())
+
+    level_of_evidence_obj = copy.deepcopy(_sheet_schema_level_of_evidence_partial())
+    level_of_evidence_obj["required"] = list(level_of_evidence_obj.get("properties", {}).keys())
+
+    rct_obj = {
         "type": "object",
         "additionalProperties": False,
         "required": [
@@ -1186,7 +1218,7 @@ def _suggested_patch_schema():
         },
     }
 
-    cohort_opt = {
+    cohort_obj = {
         "type": "object",
         "additionalProperties": False,
         "required": [
@@ -1225,7 +1257,7 @@ def _suggested_patch_schema():
         },
     }
 
-    case_series_opt = {
+    case_series_obj = {
         "type": "object",
         "additionalProperties": False,
         "required": [
@@ -1264,7 +1296,7 @@ def _suggested_patch_schema():
         },
     }
 
-    case_control_opt = {
+    case_control_obj = {
         "type": "object",
         "additionalProperties": False,
         "required": [
@@ -1301,7 +1333,7 @@ def _suggested_patch_schema():
         },
     }
 
-    systematic_opt = {
+    systematic_obj = {
         "type": "object",
         "additionalProperties": False,
         "required": [
@@ -1348,50 +1380,44 @@ def _suggested_patch_schema():
         },
     }
 
-    # Optional paper_id schema
-    paper_id_opt = {
+    sheets_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": list(PAPER_ID_SCHEMA["properties"].keys()),
-        "properties": PAPER_ID_SCHEMA["properties"],
+        "required": [
+            "included_articles",
+            "level_of_evidence",
+            "rct_appraisal",
+            "cohort_appraisal",
+            "case_series_appraisal",
+            "case_control_appraisal",
+            "systematic_appraisal",
+        ],
+        "properties": {
+            "included_articles": included_articles_obj,
+            "level_of_evidence": level_of_evidence_obj,
+            "rct_appraisal": rct_obj,
+            "cohort_appraisal": cohort_obj,
+            "case_series_appraisal": case_series_obj,
+            "case_control_appraisal": case_control_obj,
+            "systematic_appraisal": systematic_obj,
+        },
+    }
+
+    record_obj = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["sheets"],
+        "properties": {"sheets": sheets_obj},
     }
 
     return {
-        "type": ["object", "null"],
+        "type": "object",
         "additionalProperties": False,
         "required": ["paper_id", "study_type", "record"],
         "properties": {
-            "paper_id": paper_id_opt,
+            "paper_id": paper_id_obj,
             "study_type": {"type": ["string", "null"], "enum": STUDY_TYPE_ENUM + [None]},
-            "record": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["sheets"],
-                "properties": {
-                    "sheets": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": [
-                            "included_articles",
-                            "level_of_evidence",
-                            "rct_appraisal",
-                            "cohort_appraisal",
-                            "case_series_appraisal",
-                            "case_control_appraisal",
-                            "systematic_appraisal",
-                        ],
-                        "properties": {
-                            "included_articles": inc_opt,
-                            "level_of_evidence": lev_opt,
-                            "rct_appraisal": rct_opt,
-                            "cohort_appraisal": cohort_opt,
-                            "case_series_appraisal": case_series_opt,
-                            "case_control_appraisal": case_control_opt,
-                            "systematic_appraisal": systematic_opt,
-                        },
-                    }
-                },
-            },
+            "record": record_obj,
         },
     }
 
@@ -1446,7 +1472,8 @@ VERIFIER_SYSTEM = (
     "For each decision: AGREE, DISAGREE (with proposed_value), or UNSURE.\n"
     "Evidence must be short (1 sentence), no long quotes.\n"
     "If DISAGREE, propose the minimal corrected value.\n"
-    "Also provide suggested_patch as a minimal JSON object patch (only corrected fields).\n"
+    "IMPORTANT: suggested_patch MUST include ALL required keys per schema.\n"
+    "Set ONLY corrected fields to a non-null value; set all other fields to null.\n"
     "Return strict JSON matching the schema.\n"
 )
 
@@ -1856,7 +1883,7 @@ def build_final_object(working_obj, verifier_passes, decisions_non_null, verifie
     for p in verifier_passes or []:
         patch = p.get("suggested_patch")
         if isinstance(patch, dict) and patch:
-            merged = deep_merge(merged, patch)
+            merged = deep_merge_non_null(merged, patch)
 
     compute_scores_inplace(merged)
 
@@ -2236,7 +2263,7 @@ def run_pipeline_for_pdf(
         if vpass:
             patch = vpass.get("suggested_patch")
             if isinstance(patch, dict) and patch:
-                working = deep_merge(working, patch)
+                working = deep_merge_non_null(working, patch)
 
     if ENABLE_PUBMED_LOOKUP:
         working.setdefault("paper_id", {})["pmid"] = None
