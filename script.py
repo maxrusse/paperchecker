@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import fitz  # PyMuPDF
 import openpyxl
+from openpyxl.styles import PatternFill
 from docx import Document
 
 from openai import OpenAI
@@ -562,6 +563,26 @@ def _clear_data_rows(wb, excel_map):
         if max_row >= start_row:
             ws.delete_rows(start_row, max_row - start_row + 1)
 
+def _parse_sheet_field_from_path(path: Optional[str]) -> Optional[tuple[str, str]]:
+    if not path:
+        return None
+    parts = path.strip("/").split("/")
+    if len(parts) < 4:
+        return None
+    if parts[0] != "record" or parts[1] != "sheets":
+        return None
+    return parts[2], parts[3]
+
+def _severity_rank(severity: str) -> int:
+    return {"CRITICAL": 3, "WARN": 2, "INFO": 1}.get(severity, 0)
+
+def _fill_for_severity(severity: str) -> PatternFill:
+    if severity == "CRITICAL":
+        return PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    if severity == "WARN":
+        return PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    return PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+
 
 def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map, clear_existing_data=False):
     wb = openpyxl.load_workbook(template_xlsx)
@@ -576,10 +597,12 @@ def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map, clear_exist
     # Anchor row comes from Included Articles so relevant sheets align.
     anchor_row = _resolve_anchor_row(wb, pmid)
 
+    row_by_sheet = {}
+
     def write_sheet(sheet_key):
         sheet_name = (excel_map.get("sheet_key_to_name") or {}).get(sheet_key)
         if not sheet_name or sheet_name not in wb.sheetnames:
-            return
+            return None
         ws = wb[sheet_name]
         sheet_cfg = (excel_map.get("sheets") or {}).get(sheet_key) or {}
         header_rows = int(sheet_cfg.get("header_rows") or 1)
@@ -615,15 +638,58 @@ def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map, clear_exist
                 if f in cols and ws[f"{cols[f]}{row_idx}"].value in (None, ""):
                     if inc.get(f) not in (None, ""):
                         ws[f"{cols[f]}{row_idx}"].value = normalize_excel_value(inc.get(f))
+        return row_idx
 
     # Always write these two sheets (even if sparse): boss deliverable tables.
-    write_sheet("included_articles")
-    write_sheet("level_of_evidence")
+    row_by_sheet["included_articles"] = write_sheet("included_articles")
+    row_by_sheet["level_of_evidence"] = write_sheet("level_of_evidence")
 
     # Only write the appraisal sheet(s) that actually exist as dict payloads.
     for sheet_key in ("rct_appraisal", "cohort_appraisal", "case_series_appraisal", "case_control_appraisal", "systematic_appraisal"):
         if isinstance(sheets_data.get(sheet_key), dict):
-            write_sheet(sheet_key)
+            row_by_sheet[sheet_key] = write_sheet(sheet_key)
+
+    highlight_map = {}
+    for issue in ((final_obj.get("validation") or {}).get("issues") or []):
+        parsed = _parse_sheet_field_from_path(issue.get("path"))
+        if not parsed:
+            continue
+        key = parsed
+        severity = issue.get("severity", "INFO")
+        if _severity_rank(severity) <= _severity_rank(highlight_map.get(key, "INFO")):
+            continue
+        highlight_map[key] = severity
+
+    for decision in ((final_obj.get("verification") or {}).get("critical_decisions") or []):
+        status = decision.get("status")
+        if status in ("DISAGREE", "MISSING"):
+            severity = "CRITICAL"
+        elif status == "UNSURE":
+            severity = "WARN"
+        else:
+            continue
+        parsed = _parse_sheet_field_from_path(decision.get("path"))
+        if not parsed:
+            continue
+        key = parsed
+        if _severity_rank(severity) <= _severity_rank(highlight_map.get(key, "INFO")):
+            continue
+        highlight_map[key] = severity
+
+    for (sheet_key, field), severity in highlight_map.items():
+        sheet_name = (excel_map.get("sheet_key_to_name") or {}).get(sheet_key)
+        if not sheet_name or sheet_name not in wb.sheetnames:
+            continue
+        row_idx = row_by_sheet.get(sheet_key)
+        if not row_idx:
+            continue
+        sheet_cfg = (excel_map.get("sheets") or {}).get(sheet_key) or {}
+        cols = sheet_cfg.get("columns") or {}
+        col_letter = cols.get(field)
+        if not col_letter:
+            continue
+        ws = wb[sheet_name]
+        ws[f"{col_letter}{row_idx}"].fill = _fill_for_severity(severity)
 
     wb.save(out_xlsx)
 
@@ -745,108 +811,12 @@ def _clean_text(t):
     t = re.sub(r"\n{3,}", "\n\n", t)
     return t
 
-def make_global_view(pages, max_chars=MAX_VIEW_CHARS):
-    # A compact view: first pages + windows around common section headers.
+def make_full_view(pages):
     full = "\n".join([p["text"] for p in pages])
-    full = _clean_text(full)
-    tl = full.lower()
-
-    def win_at(needle, span=12000):
-        idx = tl.find(needle)
-        if idx == -1:
-            return ""
-        start = max(0, idx - 1500)
-        end = min(len(full), idx + span)
-        return full[start:end]
-
-    chunks = []
-    chunks.append(full[:8000])
-    for key in ["abstract", "methods", "materials and methods", "results", "discussion", "conclusion", "table"]:
-        c = win_at(key)
-        if c:
-            chunks.append("\n\n===== " + key.upper() + " (WINDOW) =====\n" + c)
-
-    combined = "\n".join(chunks)
-    return combined[:max_chars]
-
-def make_task_view(pages, keywords, max_chars=TASK_VIEW_CHARS, window=1400):
-    # Lightweight retrieval: collect small windows from pages containing any keyword.
-    kws = [k.lower() for k in keywords if k]
-    out = []
-    for p in pages:
-        tx = p["text"] or ""
-        tl = tx.lower()
-        hits = [k for k in kws if k in tl]
-        if not hits:
-            continue
-        # Take multiple windows per page around the first few hits.
-        # This is intentionally simple; it dramatically reduces LLM confusion vs a single huge prompt.
-        for k in hits[:4]:
-            idx = tl.find(k)
-            if idx == -1:
-                continue
-            start = max(0, idx - window)
-            end = min(len(tx), idx + window)
-            snippet = tx[start:end]
-            snippet = _clean_text(snippet)
-            out.append(f"\n\n--- PAGE {p['page_index'] + 1} (hit: {k}) ---\n{snippet}")
-        if sum(len(s) for s in out) >= max_chars:
-            break
-    joined = "\n".join(out)
-    if len(joined) < 1500:
-        # Fallback: global view
-        return make_global_view(pages, max_chars=max_chars)
-    return joined[:max_chars]
-
-def _select_pages(pages, page_numbers):
-    if not pages:
-        return []
-    if not page_numbers:
-        return pages
-    page_set = set(page_numbers)
-    subset = [p for p in pages if p.get("page_index") in page_set]
-    return subset or pages
-
-
-DECISION_KEYWORDS = {
-    "pmid": ["pmid"],
-    "doi": ["doi"],
-    "title": ["title"],
-    "author": ["author"],
-    "year": ["year"],
-    "study_design": ["study design", "randomized", "cohort", "case", "systematic review"],
-    "n_pts": ["participants", "patients", "sample", "n="],
-    "age_mean_years": ["mean age", "age"],
-    "gender_male_n": ["male", "men"],
-    "gender_female_n": ["female", "women"],
-    "prevention_technique": ["prevention", "technique"],
-    "group_intervention": ["intervention", "treatment"],
-    "group_control": ["control", "comparison"],
-    "follow_up_mean_months": ["follow-up", "months"],
-    "follow_up_range": ["follow-up", "range"],
-    "outcome_variable": ["outcome", "endpoint"],
-    "mronj_development": ["mronj", "osteonecrosis"],
-    "mronj_development_details": ["mronj", "osteonecrosis"],
-    "level_of_evidence": ["level of evidence"],
-    "grade_of_recommendation": ["grade of recommendation"],
-}
-
-def decision_keywords_for_path(path):
-    if not path:
-        return []
-    leaf = path.strip("/").split("/")[-1]
-    if leaf.startswith("q"):
-        return ["methods", "random", "blind", "confound", "follow-up", "risk of bias"]
-    return DECISION_KEYWORDS.get(leaf, [])
+    return _clean_text(full)
 
 def build_verifier_view(pages, decisions):
-    keywords = []
-    for d in decisions or []:
-        keywords.extend(decision_keywords_for_path(d.get("path")))
-    keywords = [k for k in dict.fromkeys(keywords) if k]
-    if not keywords:
-        return make_global_view(pages, max_chars=MAX_VIEW_CHARS)
-    return make_task_view(pages, keywords, max_chars=MAX_VIEW_CHARS)
+    return make_full_view(pages)
 
 
 # -------------------------
@@ -1153,6 +1123,21 @@ def build_appraisal_schema(study_type):
         },
     }
 
+def build_appraisal_schema_subset(study_type, allowed_keys):
+    schema = build_appraisal_schema(study_type)
+    sheets = (schema.get("properties") or {}).get("patch", {}).get("properties", {}).get("record", {}).get("properties", {}).get("sheets", {})
+    if not sheets:
+        return schema
+    sheet_key = next(iter(sheets.keys()), None)
+    if not sheet_key:
+        return schema
+    sheet_schema = sheets.get(sheet_key) or {}
+    props = sheet_schema.get("properties") or {}
+    if allowed_keys is None:
+        return schema
+    sheet_schema["properties"] = {k: v for k, v in props.items() if k in allowed_keys}
+    sheet_schema["required"] = list(sheet_schema.get("properties", {}).keys())
+    return schema
 
 def _optionalize_object_schema(s: dict) -> dict:
     """Create an optional version of an object schema (required: all properties)."""
@@ -1387,6 +1372,7 @@ TASK_SYSTEM = (
     "If not reported, return null.\n"
     "For 1/0 flag fields: use 1 when explicitly present, otherwise null.\n"
     "Evidence must be short (1 sentence). No long quotes.\n"
+    "Use notes to summarize uncertainties, conflicts, or unclear points for human review.\n"
     "If you can infer a page number from the snippet header (e.g., '--- PAGE 3'), include that page.\n"
     "Return strict JSON matching the schema.\n"
 )
@@ -1659,6 +1645,22 @@ def write_review_docx(final_obj, docx_path, append=True):
     else:
         status_run.font.color.rgb = RGBColor(0, 128, 0)  # Green for NO
 
+    doc.add_heading("Extraction Notes", level=2)
+    notes = final_obj.get("extraction_notes") or []
+    if not notes:
+        doc.add_paragraph("None.")
+    else:
+        for note in notes:
+            task_name = note.get("task_name", "unknown")
+            confidence = note.get("confidence")
+            note_text = note.get("notes", "")
+            p = doc.add_paragraph(style="List Bullet")
+            p.add_run(f"{task_name}").bold = True
+            if confidence is not None:
+                p.add_run(f" (confidence: {confidence:.2f})")
+            if note_text:
+                p.add_run(": " + str(note_text))
+
     # Verifier decisions table
     doc.add_heading("Extraction Decisions", level=2)
 
@@ -1802,7 +1804,7 @@ def compile_critical_decision_report(verifier_passes, decisions_non_null, final_
 
     return critical_report, issues
 
-def build_final_object(working_obj, verifier_passes, decisions_non_null, verifier_model):
+def build_final_object(working_obj, verifier_passes, decisions_non_null, verifier_model, extraction_notes=None):
     merged = copy.deepcopy(working_obj)
     # Apply all suggested patches.
     for p in verifier_passes or []:
@@ -1820,6 +1822,7 @@ def build_final_object(working_obj, verifier_passes, decisions_non_null, verifie
         "paper_id": merged.get("paper_id") or {"pmid": None, "doi": None, "title": None},
         "study_type": merged.get("study_type", "unclear"),
         "record": merged.get("record") or {"sheets": {}},
+        "extraction_notes": extraction_notes or [],
         "verification": {
             "verifier_model": verifier_model,
             "passes": verifier_passes,
@@ -1960,9 +1963,7 @@ def run_pipeline_for_pdf(
         working_json = sanitize_for_model_input(working_snapshot)
 
         for ch in chunks:
-            page_numbers = sorted({d.get("page") for d in ch if d.get("page") is not None})
-            verifier_pages = _select_pages(full_pages, page_numbers)
-            verifier_view = build_verifier_view(verifier_pages, ch)
+            verifier_view = build_verifier_view(full_pages, ch)
             vpass = verifier_fn(
                 oai_client if use_openai_verifier else gclient,
                 verifier_view,
@@ -1977,7 +1978,7 @@ def run_pipeline_for_pdf(
         """Run a single task: extract + verify immediately. Returns (task_result, verifier_passes, patch)."""
         _progress(progress_fn, f"Task {task_num}: {task_name} starting...")
 
-        view = make_task_view(full_pages, keywords=view_keywords)
+        view = make_full_view(full_pages)
         if allowed_level_keys:
             schema = build_task_schema(task_name=task_name, allowed_sheet_key=None,
                                        allowed_included_keys=allowed_keys, allowed_level_keys=allowed_level_keys)
@@ -1999,6 +2000,7 @@ def run_pipeline_for_pdf(
         _progress(progress_fn, f"Task {task_num}: {task_name} done.")
 
         task_result["patch"] = pruned_patch
+        task_result["task_name"] = task_name
         return (task_result, verifier_passes, pruned_patch)
 
     # ---- Define all tasks ----
@@ -2157,21 +2159,68 @@ def run_pipeline_for_pdf(
 
     if study_type in ("rct", "cohort", "case_series", "case_control", "systematic_review"):
         _progress(progress_fn, f"Task 5/5: critical appraisal ({study_type}) starting...")
-        view5 = make_task_view(full_pages, keywords=["methods", "random", "blind", "withdraw", "confound", "follow up", "loss to follow up", "search strategy", "protocol", "meta-analysis", "risk of bias"])
-        schema5 = build_appraisal_schema(study_type)
-        fields_text = "- Fill only the appraisal sheet for study_type=" + study_type
-        user5 = _task_user("critical_appraisal", fields_text, view5, context_json=None)
+        view5 = make_full_view(full_pages)
 
-        task5_result = run_driver("critical_appraisal", schema5, user5, "mronj_task_appraisal")
-        _progress(progress_fn, f"Task 5/5: critical appraisal extracted, verifying...")
+        appraisal_question_keys = {
+            "rct": ["q1_randomized", "q2_randomization_method", "q3_double_blind", "q4_blinding_method", "q5_withdrawals_dropouts"],
+            "cohort": [
+                "q1_groups_similar", "q2_exposures_measured_similarly", "q3_exposure_valid_reliable",
+                "q4_confounders_identified", "q5_confounders_addressed", "q6_free_of_outcome_at_start",
+                "q7_outcomes_valid_reliable", "q8_followup_sufficient", "q9_followup_complete",
+                "q10_address_incomplete_followup", "q11_appropriate_statistics",
+            ],
+            "case_series": [
+                "q1_inclusion_criteria_clear", "q2_condition_measured_standard", "q3_valid_identification_methods",
+                "q4_consecutive_inclusion", "q5_complete_inclusion", "q6_demographics_reported",
+                "q7_clinical_info_reported", "q8_outcomes_followup_reported", "q9_presenting_site_reported",
+                "q10_statistics_appropriate",
+            ],
+            "case_control": [
+                "q1_groups_comparable", "q2_matched_appropriately", "q3_same_criteria_cases_controls",
+                "q4_exposure_valid_reliable", "q5_exposure_measured_same_way", "q6_confounders_identified",
+                "q7_confounders_addressed", "q8_outcomes_assessed_standard", "q9_exposure_period_long_enough",
+                "q10_appropriate_statistics",
+            ],
+            "systematic_review": [
+                "q1_pico", "q2_protocol_predefined", "q3_designs_explained", "q4_6_search_and_duplicates",
+                "q7_excluded_list", "q8_included_described", "q9_risk_of_bias", "q10_funding_sources",
+                "q11_meta_analysis_methods", "q12_impact_of_rob", "q13_account_for_rob",
+                "q14_heterogeneity_explained", "q15_publication_bias", "q16_conflicts_reported",
+            ],
+        }
 
-        working5 = _init_working_object()
-        working5 = _apply_patch(working5, task5_result.get("patch"))
-        task5_vpasses = verify_decisions(task5_result, working5)
+        meta_keys = ["pmid", "author", "year", "study_design"]
+        question_keys = appraisal_question_keys.get(study_type, [])
+        mid = max(1, len(question_keys) // 2)
+        part1_keys = meta_keys + question_keys[:mid]
+        part2_keys = question_keys[mid:]
 
-        all_task_results.append(task5_result)
-        all_verifier_passes.extend(task5_vpasses)
-        all_patches.append(task5_result.get("patch"))
+        def run_appraisal_part(part_num, allowed_keys):
+            if not allowed_keys:
+                return
+            task_name = f"critical_appraisal_part{part_num}"
+            fields_text = (
+                "- Fill only these appraisal fields for study_type="
+                + study_type
+                + ":\n"
+                + ", ".join(allowed_keys)
+            )
+            schema_part = build_appraisal_schema_subset(study_type, allowed_keys)
+            user_prompt = _task_user(task_name, fields_text, view5, context_json=None)
+            task_result = run_driver(task_name, schema_part, user_prompt, f"mronj_task_appraisal_{part_num}")
+            task_result["task_name"] = task_name
+            _progress(progress_fn, f"Task 5/5.{part_num}: critical appraisal extracted, verifying...")
+
+            working_part = _init_working_object()
+            working_part = _apply_patch(working_part, task_result.get("patch"))
+            vpasses = verify_decisions(task_result, working_part)
+
+            all_task_results.append(task_result)
+            all_verifier_passes.extend(vpasses)
+            all_patches.append(task_result.get("patch"))
+
+        run_appraisal_part(1, part1_keys)
+        run_appraisal_part(2, part2_keys)
         _progress(progress_fn, "Task 5/5: critical appraisal done.")
     else:
         _progress(progress_fn, "Task 5/5 skipped (study_type unclear/other).")
@@ -2250,7 +2299,25 @@ def run_pipeline_for_pdf(
         ]
     decisions_non_null = decisions_only_non_null(all_decisions)
 
-    final_obj = build_final_object(working, all_verifier_passes, decisions_non_null, verifier_model=verifier_model)
+    extraction_notes = []
+    for task_result in all_task_results:
+        note_text = task_result.get("notes")
+        confidence = task_result.get("confidence")
+        task_name = task_result.get("task_name") or "unknown"
+        if note_text or confidence is not None:
+            extraction_notes.append({
+                "task_name": task_name,
+                "notes": note_text or "",
+                "confidence": confidence,
+            })
+
+    final_obj = build_final_object(
+        working,
+        all_verifier_passes,
+        decisions_non_null,
+        verifier_model=verifier_model,
+        extraction_notes=extraction_notes,
+    )
 
     _progress(progress_fn, "Writing Excel + Word outputs...")
     apply_to_workbook(final_obj, template_xlsx, out_xlsx, EXCEL_MAP, clear_existing_data=clear_existing_data)
