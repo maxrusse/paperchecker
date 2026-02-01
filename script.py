@@ -1714,10 +1714,15 @@ def run_pipeline_for_pdf(
         "allowed_level_keys": ["level_of_evidence", "grade_of_recommendation"],
         "schema_name": "mronj_task_meta_design",
         "fields_text": (
-            "- paper_id: pmid/doi/title\n"
-            "- study_type: one of " + "|".join(STUDY_TYPE_ENUM) + "\n"
-            "- included_articles: pmid, author, year, study_design\n"
-            "- level_of_evidence: level_of_evidence (e.g. '1a', '2b', 'III'), grade_of_recommendation (e.g. 'A', 'B', 'C') - extract if explicitly stated using Oxford/SIGN/GRADE/AWMF or similar framework"
+            "EXTRACT these fields:\n"
+            "- paper_id: pmid (PubMed ID as integer), doi, title (from paper header/abstract)\n"
+            "- study_type: MUST be one of: " + "|".join(STUDY_TYPE_ENUM) + "\n"
+            "- included_articles.pmid: same as paper_id.pmid\n"
+            "- included_articles.author: first author surname (e.g. 'Smith')\n"
+            "- included_articles.year: publication year as integer\n"
+            "- included_articles.study_design: brief description (e.g. 'Retrospective cohort')\n"
+            "- level_of_evidence.level_of_evidence: e.g. '1a', '2b', 'III' - only if explicitly stated\n"
+            "- level_of_evidence.grade_of_recommendation: e.g. 'A', 'B', 'C' - only if explicitly stated"
         ),
     }
 
@@ -1726,7 +1731,14 @@ def run_pipeline_for_pdf(
         "view_keywords": ["participants", "patients", "sample", "n=", "mean age", "male", "female", "table 1"],
         "allowed_keys": ["n_pts", "age_mean_years", "gender_male_n", "gender_female_n"],
         "schema_name": "mronj_task_population",
-        "fields_text": "- included_articles: n_pts, age_mean_years, gender_male_n, gender_female_n",
+        "fields_text": (
+            "EXTRACT these fields from included_articles sheet:\n"
+            "- n_pts: total number of patients/participants as integer\n"
+            "- age_mean_years: mean age in years as number (e.g. 65.4)\n"
+            "- gender_male_n: number of male participants as integer\n"
+            "- gender_female_n: number of female participants as integer\n"
+            "NOTE: Leave paper_id and study_type as null (handled by another task)"
+        ),
     }
 
     task3_config = {
@@ -1741,7 +1753,27 @@ def run_pipeline_for_pdf(
             "route_iv","route_oral","route_im","route_subcutaneous","route_both","route_not_reported",
         ],
         "schema_name": "mronj_task_indication_drugs",
-        "fields_text": "- included_articles (flags): site_maxilla, site_mandible, site_both, primary_cause_*, ards_bisphosphonates_*, ards_denosumab, ards_both, route_*",
+        "fields_text": (
+            "EXTRACT these flags (1 if present, null if not mentioned) from included_articles sheet:\n"
+            "SITE (where MRONJ occurred):\n"
+            "- site_maxilla, site_mandible, site_both\n"
+            "PRIMARY CAUSE/INDICATION:\n"
+            "- primary_cause_breast_cancer, primary_cause_prostate_cancer, primary_cause_mm (multiple myeloma)\n"
+            "- primary_cause_osteoporosis, primary_cause_other\n"
+            "DRUGS - Bisphosphonates:\n"
+            "- ards_bisphosphonates_zoledronate (Zometa/Reclast)\n"
+            "- ards_bisphosphonates_pamidronate (Aredia)\n"
+            "- ards_bisphosphonates_alendronate (Fosamax)\n"
+            "- ards_bisphosphonates_risedronate (Actonel)\n"
+            "- ards_bisphosphonates_ibandronate (Boniva)\n"
+            "- ards_bisphosphonates_etidronate, ards_bisphosphonates_clodronate\n"
+            "- ards_bisphosphonates_combination (multiple BPs), ards_bisphosphonates_unknown_other\n"
+            "DRUGS - Other:\n"
+            "- ards_denosumab (Prolia/Xgeva), ards_both (BP + denosumab)\n"
+            "ROUTE of administration:\n"
+            "- route_iv, route_oral, route_im, route_subcutaneous, route_both, route_not_reported\n"
+            "NOTE: Leave paper_id and study_type as null (handled by another task)"
+        ),
     }
 
     task4_config = {
@@ -1753,7 +1785,24 @@ def run_pipeline_for_pdf(
             "follow_up_mean_months","follow_up_range","outcome_variable","mronj_development","mronj_development_details",
         ],
         "schema_name": "mronj_task_outcomes",
-        "fields_text": "- included_articles: mronj_stage_at_risk, mronj_stage_0, prevention_technique, group_intervention, group_control, follow_up_mean_months, follow_up_range, outcome_variable, mronj_development, mronj_development_details",
+        "fields_text": (
+            "EXTRACT these fields from included_articles sheet:\n"
+            "STAGING:\n"
+            "- mronj_stage_at_risk: number of patients at risk stage (integer)\n"
+            "- mronj_stage_0: number of patients at stage 0 (integer)\n"
+            "INTERVENTION:\n"
+            "- prevention_technique: description of prevention method used\n"
+            "- group_intervention: description of intervention group\n"
+            "- group_control: description of control group\n"
+            "FOLLOW-UP:\n"
+            "- follow_up_mean_months: mean follow-up duration in months (number)\n"
+            "- follow_up_range: follow-up range as string (e.g. '6-24 months')\n"
+            "OUTCOMES:\n"
+            "- outcome_variable: primary outcome measured\n"
+            "- mronj_development: 'Yes' or 'No' - did MRONJ develop?\n"
+            "- mronj_development_details: details about MRONJ cases if any\n"
+            "NOTE: Leave paper_id and study_type as null (handled by another task)"
+        ),
     }
 
     # ---- Run Tasks 1-4 in parallel (each with immediate verification) ----
