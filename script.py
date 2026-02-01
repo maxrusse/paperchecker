@@ -1332,10 +1332,13 @@ def _suggested_patch_schema():
         "properties": {"sheets": sheets_obj},
     }
 
+    for sheet_schema in (rct_obj, cohort_obj, case_series_obj, case_control_obj, systematic_obj):
+        sheet_schema["required"] = list(sheet_schema.get("properties", {}).keys())
+
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": ["paper_id", "study_type", "record"],
         "properties": {
             "paper_id": paper_id_obj,
             "study_type": {"type": ["string", "null"], "enum": STUDY_TYPE_ENUM + [None]},
