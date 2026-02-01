@@ -622,7 +622,7 @@ def _sheet_schema_included_articles_partial():
         "mronj_development": {"type": ["string", "null"], "enum": MRONJ_DEV_ENUM + [None]},
         "mronj_development_details": {"type": ["string", "null"]},
     }
-    return {"type": "object", "additionalProperties": False, "properties": props}
+    return {"type": "object", "additionalProperties": False, "required": list(props.keys()), "properties": props}
 
 def _sheet_schema_level_of_evidence_partial():
     props = {
@@ -633,7 +633,7 @@ def _sheet_schema_level_of_evidence_partial():
         "level_of_evidence": {"type": ["string", "null"]},
         "grade_of_recommendation": {"type": ["string", "null"]},
     }
-    return {"type": "object", "additionalProperties": False, "properties": props}
+    return {"type": "object", "additionalProperties": False, "required": list(props.keys()), "properties": props}
 
 DECISION_SCHEMA = {
     "type": "object",
@@ -670,10 +670,12 @@ def build_task_schema(task_name, allowed_sheet_key=None, allowed_included_keys=N
     if allowed_included_keys is not None:
         inc_schema = copy.deepcopy(inc_schema)
         inc_schema["properties"] = {k: v for k, v in inc_schema["properties"].items() if k in allowed_included_keys}
+        inc_schema["required"] = list(inc_schema["properties"].keys())
 
     if allowed_level_keys is not None:
         lev_schema = copy.deepcopy(lev_schema)
         lev_schema["properties"] = {k: v for k, v in lev_schema["properties"].items() if k in allowed_level_keys}
+        lev_schema["required"] = list(lev_schema["properties"].keys())
 
     sheets_props = {}
     if allowed_sheet_key == "included_articles":
@@ -693,16 +695,19 @@ def build_task_schema(task_name, allowed_sheet_key=None, allowed_included_keys=N
             "patch": {
                 "type": "object",
                 "additionalProperties": False,
+                "required": ["paper_id", "study_type", "record"],
                 "properties": {
                     "paper_id": PAPER_ID_SCHEMA,
                     "study_type": {"type": ["string", "null"], "enum": STUDY_TYPE_ENUM + [None]},
                     "record": {
                         "type": "object",
                         "additionalProperties": False,
+                        "required": ["sheets"],
                         "properties": {
                             "sheets": {
                                 "type": "object",
                                 "additionalProperties": False,
+                                "required": list(sheets_props.keys()),
                                 "properties": sheets_props,
                             }
                         },
@@ -835,6 +840,9 @@ def build_appraisal_schema(study_type):
     else:
         sheets = {}
 
+    for sheet_schema in sheets.values():
+        sheet_schema["required"] = list(sheet_schema.get("properties", {}).keys())
+
     return {
         "type": "object",
         "additionalProperties": False,
@@ -843,14 +851,17 @@ def build_appraisal_schema(study_type):
             "patch": {
                 "type": "object",
                 "additionalProperties": False,
+                "required": ["record"],
                 "properties": {
                     "record": {
                         "type": "object",
                         "additionalProperties": False,
+                        "required": ["sheets"],
                         "properties": {
                             "sheets": {
                                 "type": "object",
                                 "additionalProperties": False,
+                                "required": list(sheets.keys()),
                                 "properties": sheets,
                             }
                         },
