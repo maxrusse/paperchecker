@@ -20,6 +20,9 @@
 #   This script can fill them if you provide definitions, but by default it leaves them null unless explicitly stated in the paper.
 
 import os, json, re, copy, random, time
+import urllib.parse
+import urllib.request
+from typing import Optional
 from datetime import datetime, UTC
 
 import fitz  # PyMuPDF
@@ -64,6 +67,13 @@ VERIFIER_CHUNK_SIZE = 24
 LLM_MAX_RETRIES = 3
 LLM_BACKOFF_SECONDS = 2.0
 LLM_BACKOFF_JITTER = 0.25
+
+# Optional PMID lookup (PubMed E-utilities). When enabled, missing PMIDs can be
+# resolved from DOI/title using a lightweight web request.
+ENABLE_PUBMED_LOOKUP = True
+PUBMED_API_KEY = os.getenv("PUBMED_API_KEY")
+PUBMED_EMAIL = os.getenv("PUBMED_EMAIL")
+PUBMED_LOOKUP_TIMEOUT = 10
 
 
 # -------------------------
@@ -1209,6 +1219,38 @@ def _apply_patch(working, patch):
 def _collect_decisions(all_task_results):
     return dedupe_decisions(all_task_results)
 
+
+def _pubmed_esearch(term: str, api_key: Optional[str], email: Optional[str], timeout: int) -> list[str]:
+    if not term:
+        return []
+    params = {
+        "db": "pubmed",
+        "retmode": "json",
+        "term": term,
+    }
+    if api_key:
+        params["api_key"] = api_key
+    if email:
+        params["email"] = email
+    url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?" + urllib.parse.urlencode(params)
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return (payload.get("esearchresult") or {}).get("idlist") or []
+
+
+def lookup_pmid_via_pubmed(title: Optional[str], doi: Optional[str]) -> Optional[str]:
+    if not ENABLE_PUBMED_LOOKUP:
+        return None
+    if doi:
+        ids = _pubmed_esearch(f"{doi}[DOI]", PUBMED_API_KEY, PUBMED_EMAIL, PUBMED_LOOKUP_TIMEOUT)
+        if ids:
+            return ids[0]
+    if title:
+        ids = _pubmed_esearch(f"{title}[Title]", PUBMED_API_KEY, PUBMED_EMAIL, PUBMED_LOOKUP_TIMEOUT)
+        if ids:
+            return ids[0]
+    return None
+
 def run_pipeline_for_pdf(
     pdf_path,
     oai_client,
@@ -1245,6 +1287,17 @@ def run_pipeline_for_pdf(
 
     working = _apply_patch(working, r1.get("patch"))
     task_results.append(r1)
+
+    # Optional PMID lookup via PubMed if missing.
+    if ENABLE_PUBMED_LOOKUP and not (working.get("paper_id") or {}).get("pmid"):
+        paper_id = working.get("paper_id") or {}
+        try:
+            found_pmid = lookup_pmid_via_pubmed(paper_id.get("title"), paper_id.get("doi"))
+        except Exception as exc:
+            _progress(progress_fn, f"PubMed lookup failed: {exc}")
+            found_pmid = None
+        if found_pmid:
+            working.setdefault("paper_id", {})["pmid"] = found_pmid
 
     # Ensure pmid is copied to included_articles + level_of_evidence for convenience.
     pmid = (working.get("paper_id") or {}).get("pmid")

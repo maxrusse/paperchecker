@@ -13,6 +13,7 @@
 3. **LLM extraction (round-based)**
    - The pipeline runs focused extraction rounds (see below), each returning only a small field subset plus evidence snippets.
    - Outputs are merged into a single working JSON object representing the Excel rows.
+   - Optional PubMed lookup can fill missing PMIDs using DOI/title (toggle in `script.py`).
 4. **Verifier pass**
    - Only non-null decisions are reviewed by a verifier model, chunked for manageable context.
    - Disagreements produce minimal corrective patches.
@@ -38,6 +39,14 @@ Each PDF is processed through focused LLM rounds to reduce hallucinations and ma
    - Prevention techniques, intervention/control groups, follow-up, outcomes, and MRONJ development status.
 5. **Round 5: Critical appraisal (conditional)**
    - If the study type is RCT/cohort/case series/case-control/systematic review, the relevant appraisal checklist is filled.
+
+## Optional PubMed PMID lookup
+
+If a PMID is missing from the PDF, the pipeline can query PubMed E-utilities using the DOI or title.
+Configure with:
+
+- `ENABLE_PUBMED_LOOKUP` in `script.py` (default `True`).
+- `PUBMED_API_KEY` and `PUBMED_EMAIL` environment variables (optional but recommended).
 
 ## Colab notebook
 
