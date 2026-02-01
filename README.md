@@ -112,7 +112,7 @@ See [docs.md](docs.md) for detailed technical documentation including:
 - Critical appraisal checklist specifications
 - LLM task design rationale
 
-See [extraction_hints.md](extraction_hints.md) for the keyword hints and field-level extraction rules.
+See [extraction_hints.md](extraction_hints.md) for field-level extraction rules and expectations.
 
 ## Requirements
 

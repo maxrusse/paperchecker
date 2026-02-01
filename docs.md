@@ -174,7 +174,7 @@ A single monolithic prompt that tries to fill every sheet tends to:
 5) **Critical appraisal** (only the relevant checklist, based on study type)
 
 Each task:
-- receives a *targeted snippet view* (keyword retrieval),
+- receives the full-text view,
 - outputs only a small set of fields,
 - attaches short evidence for every non-null value.
 
