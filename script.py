@@ -1125,13 +1125,14 @@ def build_appraisal_schema(study_type):
 
 def build_appraisal_schema_subset(study_type, allowed_keys):
     schema = build_appraisal_schema(study_type)
-    sheets = (schema.get("properties") or {}).get("patch", {}).get("properties", {}).get("record", {}).get("properties", {}).get("sheets", {})
-    if not sheets:
+    sheets_schema = (schema.get("properties") or {}).get("patch", {}).get("properties", {}).get("record", {}).get("properties", {}).get("sheets", {})
+    sheet_props = (sheets_schema or {}).get("properties", {})
+    if not sheet_props:
         return schema
-    sheet_key = next(iter(sheets.keys()), None)
+    sheet_key = next(iter(sheet_props.keys()), None)
     if not sheet_key:
         return schema
-    sheet_schema = sheets.get(sheet_key) or {}
+    sheet_schema = sheet_props.get(sheet_key) or {}
     props = sheet_schema.get("properties") or {}
     if allowed_keys is None:
         return schema
