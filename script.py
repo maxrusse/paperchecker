@@ -687,6 +687,9 @@ def build_task_schema(task_name, allowed_sheet_key=None, allowed_included_keys=N
         sheets_props["included_articles"] = inc_schema
         sheets_props["level_of_evidence"] = lev_schema
 
+    for sheet_schema in sheets_props.values():
+        sheet_schema["required"] = list(sheet_schema.get("properties", {}).keys())
+
     schema = {
         "type": "object",
         "additionalProperties": False,
