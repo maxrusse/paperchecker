@@ -88,8 +88,14 @@ Edit `script.py` to customize:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `OPENAI_MODEL` | `gpt-5.2` | OpenAI model for extraction |
-| `GEMINI_MODEL` | `gemini-3-pro-preview` | Google model for verification |
+| `OPENAI_EXTRACT_MODEL` | `gpt-5.2` | OpenAI model for extraction |
+| `OPENAI_VERIFIER_MODEL` | `gpt-5.2` | OpenAI model for verification |
+| `GEMINI_EXTRACT_MODEL` | `gemini-3-pro-preview` | Google model for extraction |
+| `GEMINI_VERIFIER_MODEL` | `gemini-3-pro-preview` | Google model for verification |
+| `REASONING_EFFORT_OPENAI` | `medium` | Reasoning effort for OpenAI extraction |
+| `VERIFIER_REASONING_EFFORT_OPENAI` | `low` | Reasoning effort for OpenAI verification |
+| `THINKING_LEVEL_GEMINI` | `low` | Thinking level for Gemini extraction |
+| `VERIFIER_THINKING_LEVEL_GEMINI` | `low` | Thinking level for Gemini verification |
 | `ENABLE_PUBMED_LOOKUP` | `True` | Auto-fetch missing PMIDs |
 
 ## Outputs

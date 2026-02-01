@@ -56,8 +56,10 @@ OUT_XLSX = f"output/mronj_extraction_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S'
 OUT_DOCX = f"output/mronj_review_log_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.docx"
 
 # Models (keep as placeholders; set to models you have access to)
-OPENAI_MODEL = "gpt-5.2"
-GEMINI_MODEL = "gemini-3-pro-preview"
+OPENAI_EXTRACT_MODEL = "gpt-5.2"
+OPENAI_VERIFIER_MODEL = "gpt-5.2"
+GEMINI_EXTRACT_MODEL = "gemini-3-pro-preview"
+GEMINI_VERIFIER_MODEL = "gemini-3-pro-preview"
 
 REASONING_EFFORT_OPENAI = "medium"   # none|low|medium|high|xhigh
 THINKING_LEVEL_GEMINI = "low"        # minimal|low|high
@@ -1223,7 +1225,7 @@ def _call_with_retries(fn, description):
 def openai_json(oai_client, system_text, user_text, schema, schema_name):
     def _call():
         resp = oai_client.responses.create(
-            model=OPENAI_MODEL,
+            model=OPENAI_EXTRACT_MODEL,
             reasoning={"effort": REASONING_EFFORT_OPENAI},
             input=[
                 {"role": "system", "content": system_text},
@@ -1237,7 +1239,7 @@ def openai_json(oai_client, system_text, user_text, schema, schema_name):
 def gemini_json(gclient, system_text, user_text, schema):
     def _call():
         resp = gclient.models.generate_content(
-            model=GEMINI_MODEL,
+            model=GEMINI_EXTRACT_MODEL,
             contents=user_text,
             config=types.GenerateContentConfig(
                 system_instruction=system_text,
@@ -1255,7 +1257,7 @@ def gemini_json(gclient, system_text, user_text, schema):
 def openai_json_verifier(oai_client, system_text, user_text, schema, schema_name):
     def _call():
         resp = oai_client.responses.create(
-            model=OPENAI_MODEL,
+            model=OPENAI_VERIFIER_MODEL,
             reasoning={"effort": VERIFIER_REASONING_EFFORT_OPENAI},
             input=[
                 {"role": "system", "content": system_text},
@@ -1270,7 +1272,7 @@ def openai_json_verifier(oai_client, system_text, user_text, schema, schema_name
 def gemini_json_verifier(gclient, system_text, user_text, schema):
     def _call():
         resp = gclient.models.generate_content(
-            model=GEMINI_MODEL,
+            model=GEMINI_VERIFIER_MODEL,
             contents=user_text,
             config=types.GenerateContentConfig(
                 system_instruction=system_text,
@@ -1729,7 +1731,7 @@ def run_pipeline_for_pdf(
         )
 
     verifier_fn = openai_verify_chunk if use_openai_verifier else gemini_verify_chunk
-    verifier_model = OPENAI_MODEL if use_openai_verifier else GEMINI_MODEL
+    verifier_model = OPENAI_VERIFIER_MODEL if use_openai_verifier else GEMINI_VERIFIER_MODEL
 
     def run_driver(task_name, schema, user_prompt, schema_name):
         """Run extraction for a task."""
