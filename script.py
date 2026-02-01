@@ -583,6 +583,30 @@ def _fill_for_severity(severity: str) -> PatternFill:
         return PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
     return PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 
+INTEGER_COUNT_FIELDS = {
+    "mronj_stage_at_risk",
+    "mronj_stage_0",
+}
+
+def _normalize_int_like(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == "":
+            return None
+        if re.fullmatch(r"[-+]?\d+", stripped):
+            return int(stripped)
+        if re.fullmatch(r"[-+]?\d+\.0+", stripped):
+            return int(float(stripped))
+    return value
+
 
 def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map, clear_existing_data=False):
     wb = openpyxl.load_workbook(template_xlsx)
@@ -629,6 +653,8 @@ def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map, clear_exist
                     v = payload.get(field)
                     if v is None:
                         continue
+                    if field in INTEGER_COUNT_FIELDS:
+                        v = _normalize_int_like(v)
                     ws[f"{col_letter}{row_idx}"].value = normalize_excel_value(v)
 
         # Back-fill author/year/study_design from Included Articles if available and blank.
@@ -857,8 +883,8 @@ def _sheet_schema_included_articles_partial():
         "route_subcutaneous": {"type": ["integer", "null"], "enum": [1, None]},
         "route_both": {"type": ["integer", "null"], "enum": [1, None]},
         "route_not_reported": {"type": ["integer", "null"], "enum": [1, None]},
-        "mronj_stage_at_risk": {"type": ["integer", "null"], "enum": [1, None]},
-        "mronj_stage_0": {"type": ["integer", "null"], "enum": [1, None]},
+        "mronj_stage_at_risk": {"type": ["integer", "null"]},
+        "mronj_stage_0": {"type": ["integer", "null"]},
         "prevention_technique": {"type": ["string", "null"]},
         "group_intervention": {"type": ["string", "null"]},
         "group_control": {"type": ["string", "null"]},
