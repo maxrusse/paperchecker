@@ -1139,6 +1139,177 @@ def build_appraisal_schema(study_type):
     }
 
 
+def _optionalize_object_schema(s: dict) -> dict:
+    """Create an optional version of an object schema (required: [])."""
+    s2 = copy.deepcopy(s)
+    s2["required"] = []
+    return s2
+
+
+def _suggested_patch_schema():
+    """Build schema for verifier suggested_patch that satisfies OpenAI strict mode."""
+    # Helper for Y/N/U/A enum fields used in appraisal sheets
+    def y_schema():
+        return {"type": ["string", "null"], "enum": APPRAISAL_YNUA_ENUM + [None]}
+
+    # Optional versions of main sheet schemas
+    inc_opt = _optionalize_object_schema(_sheet_schema_included_articles_partial())
+    lev_opt = _optionalize_object_schema(_sheet_schema_level_of_evidence_partial())
+
+    # Appraisal sheet optional schemas (all fields optional)
+    rct_opt = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
+        "properties": {
+            "pmid": {"type": ["integer", "null"]},
+            "author": {"type": ["string", "null"]},
+            "year": {"type": ["integer", "null"]},
+            "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
+            "q1_randomized": {"type": ["string", "null"], "enum": ["0", "1", None]},
+            "q2_randomization_method": {"type": ["string", "null"], "enum": ["-1", "0", "+1", None]},
+            "q3_double_blind": {"type": ["string", "null"], "enum": ["0", "1", None]},
+            "q4_blinding_method": {"type": ["string", "null"], "enum": ["-1", "0", "+1", None]},
+            "q5_withdrawals_dropouts": {"type": ["string", "null"], "enum": ["0", "1", None]},
+            "total_score": {"type": ["integer", "null"]},
+        },
+    }
+
+    cohort_opt = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
+        "properties": {
+            "pmid": {"type": ["integer", "null"]},
+            "author": {"type": ["string", "null"]},
+            "year": {"type": ["integer", "null"]},
+            "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
+            "q1_groups_similar": y_schema(),
+            "q2_exposures_measured_similarly": y_schema(),
+            "q3_exposure_valid_reliable": y_schema(),
+            "q4_confounders_identified": y_schema(),
+            "q5_confounders_addressed": y_schema(),
+            "q6_free_of_outcome_at_start": y_schema(),
+            "q7_outcomes_valid_reliable": y_schema(),
+            "q8_followup_sufficient": y_schema(),
+            "q9_followup_complete": y_schema(),
+            "q10_address_incomplete_followup": y_schema(),
+            "q11_appropriate_statistics": y_schema(),
+        },
+    }
+
+    case_series_opt = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
+        "properties": {
+            "pmid": {"type": ["integer", "null"]},
+            "author": {"type": ["string", "null"]},
+            "year": {"type": ["integer", "null"]},
+            "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
+            "q1_inclusion_criteria_clear": y_schema(),
+            "q2_condition_measured_standard": y_schema(),
+            "q3_valid_identification_methods": y_schema(),
+            "q4_consecutive_inclusion": y_schema(),
+            "q5_complete_inclusion": y_schema(),
+            "q6_demographics_reported": y_schema(),
+            "q7_clinical_info_reported": y_schema(),
+            "q8_outcomes_followup_reported": y_schema(),
+            "q9_presenting_site_reported": y_schema(),
+            "q10_statistics_appropriate": y_schema(),
+            "total_score": {"type": ["integer", "null"]},
+        },
+    }
+
+    case_control_opt = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
+        "properties": {
+            "pmid": {"type": ["integer", "null"]},
+            "author": {"type": ["string", "null"]},
+            "year": {"type": ["integer", "null"]},
+            "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
+            "q1_groups_comparable": y_schema(),
+            "q2_matched_appropriately": y_schema(),
+            "q3_same_criteria_cases_controls": y_schema(),
+            "q4_exposure_valid_reliable": y_schema(),
+            "q5_exposure_measured_same_way": y_schema(),
+            "q6_confounders_identified": y_schema(),
+            "q7_confounders_addressed": y_schema(),
+            "q8_outcomes_assessed_standard": y_schema(),
+            "q9_exposure_period_long_enough": y_schema(),
+            "q10_appropriate_statistics": y_schema(),
+        },
+    }
+
+    systematic_opt = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
+        "properties": {
+            "pmid": {"type": ["integer", "null"]},
+            "author": {"type": ["string", "null"]},
+            "year": {"type": ["integer", "null"]},
+            "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
+            "q1_pico": y_schema(),
+            "q2_protocol_predefined": y_schema(),
+            "q3_designs_explained": y_schema(),
+            "q4_6_search_and_duplicates": y_schema(),
+            "q7_excluded_list": y_schema(),
+            "q8_included_described": y_schema(),
+            "q9_risk_of_bias": y_schema(),
+            "q10_funding_sources": y_schema(),
+            "q11_meta_analysis_methods": y_schema(),
+            "q12_impact_of_rob": y_schema(),
+            "q13_account_for_rob": y_schema(),
+            "q14_heterogeneity_explained": y_schema(),
+            "q15_publication_bias": y_schema(),
+            "q16_conflicts_reported": y_schema(),
+            "total_score": {"type": ["integer", "null"]},
+        },
+    }
+
+    # Optional paper_id schema
+    paper_id_opt = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
+        "properties": PAPER_ID_SCHEMA["properties"],
+    }
+
+    return {
+        "type": ["object", "null"],
+        "additionalProperties": False,
+        "required": [],
+        "properties": {
+            "paper_id": paper_id_opt,
+            "study_type": {"type": ["string", "null"], "enum": STUDY_TYPE_ENUM + [None]},
+            "record": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [],
+                "properties": {
+                    "sheets": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [],
+                        "properties": {
+                            "included_articles": inc_opt,
+                            "level_of_evidence": lev_opt,
+                            "rct_appraisal": rct_opt,
+                            "cohort_appraisal": cohort_opt,
+                            "case_series_appraisal": case_series_opt,
+                            "case_control_appraisal": case_control_opt,
+                            "systematic_appraisal": systematic_opt,
+                        },
+                    }
+                },
+            },
+        },
+    }
+
+
 VERIFIER_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -1163,7 +1334,7 @@ VERIFIER_SCHEMA = {
                 },
             },
         },
-        "suggested_patch": {"type": ["object", "null"]},
+        "suggested_patch": _suggested_patch_schema(),
         "rationale": {"type": "string"},
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
     },
