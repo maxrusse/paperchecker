@@ -1,58 +1,113 @@
 # PaperChecker
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/paperchecker/paperchecker/blob/main/paperchecker_colab.ipynb)
+LLM-powered pipeline for extracting structured data from medical research PDFs.
 
-## High-level data flow
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/maxrusse/paperchecker/blob/main/paperchecker_colab.ipynb)
 
-1. **Input assets**
-   - One or more MRONJ-prevention PDFs.
-   - The fixed Excel template: `Prevention of MRONJ_Extraction Sheet (Oli).xlsx`.
-2. **PDF text extraction**
-   - Each PDF is parsed into per-page text.
-   - A global view and targeted keyword windows are created to keep LLM prompts focused and small. 
-3. **LLM extraction (round-based)**
-   - The pipeline runs focused extraction rounds (see below), each returning only a small field subset plus evidence snippets.
-   - Outputs are merged into a single working JSON object representing the Excel rows.
-   - Optional PubMed lookup can fill missing PMIDs using DOI/title (toggle in `script.py`).
-4. **Verifier pass**
-   - Only non-null decisions are reviewed by a verifier model, chunked for manageable context.
-   - Disagreements produce minimal corrective patches.
-5. **Post-processing**
-   - Appraisal scores are computed (where applicable).
-   - Lightweight validation rules flag conflicts (e.g., route flags).
-6. **Outputs**
-   - Filled Excel workbook (same structure as the template).
-   - Optional Word review log summarizing verifier decisions.
-   - Per-paper audit JSON for traceability.
+## Overview
 
-## Extraction rounds (tasks per paper)
+PaperChecker automates the extraction of structured data from medical research papers (specifically MRONJ prevention studies) into Excel templates. It uses multi-round LLM extraction with verification to ensure accuracy.
 
-Each PDF is processed through focused LLM rounds to reduce hallucinations and make verification tractable:
+**Key Features:**
+- Extracts data from PDF research papers into a structured Excel format
+- Multi-round extraction reduces hallucinations (metadata, population, drugs, interventions, appraisal)
+- Verification pass reviews all non-null decisions
+- Supports OpenAI and Google Gemini models
+- Generates audit trails and review logs
+- Optional PubMed lookup for missing PMIDs
 
-1. **Round 1: Metadata + study design**
-   - PMID/DOI/title, author/year, study design, and coarse study-type classification.
-2. **Round 2: Population**
-   - Sample size, mean age, and male/female counts.
-3. **Round 3: Indications + drugs + route + site**
-   - Indication flags, ARD drug flags, administration route flags, and maxilla/mandible site flags.
-4. **Round 4: Intervention + outcomes**
-   - Prevention techniques, intervention/control groups, follow-up, outcomes, and MRONJ development status.
-5. **Round 5: Critical appraisal (conditional)**
-   - If the study type is RCT/cohort/case series/case-control/systematic review, the relevant appraisal checklist is filled.
+## Quick Start (Google Colab)
 
-## Optional PubMed PMID lookup
+1. Click the **Open in Colab** badge above
+2. Add your API keys to Colab Secrets:
+   - `OPENAI_API_KEY`
+   - `GOOGLE_API_KEY`
+3. Upload your PDF files
+4. Run the pipeline and download results
 
-If a PMID is missing from the PDF, the pipeline can query PubMed E-utilities using the DOI or title.
-Configure with:
+## Local Installation
 
-- `ENABLE_PUBMED_LOOKUP` in `script.py` (default `True`).
-- `PUBMED_API_KEY` and `PUBMED_EMAIL` environment variables (optional but recommended).
+```bash
+# Clone the repository
+git clone https://github.com/maxrusse/paperchecker.git
+cd paperchecker
 
-## Colab notebook
+# Install dependencies
+pip install -r requirements.txt
 
-Use the Colab notebook for an end-to-end run (PDF → JSON → validation → Excel + Word outputs).
+# Set API keys
+export OPENAI_API_KEY="your-key"
+export GOOGLE_API_KEY="your-key"
+```
 
-1. Open `paperchecker_colab.ipynb` in Colab using the badge above.
-2. Install dependencies and set API keys.
-3. Upload your PDFs and Excel template.
-4. Run the pipeline.
+## Usage
+
+```python
+from script import run_pipeline
+
+results = run_pipeline(
+    pdf_paths=["paper1.pdf", "paper2.pdf"],
+    out_xlsx="output/extraction.xlsx",
+    out_docx="output/review_log.docx",
+)
+```
+
+## Pipeline Overview
+
+```
+PDF files
+    |
+    v
+[Text Extraction] -- PyMuPDF
+    |
+    v
+[LLM Extraction] -- 5 focused rounds
+    |  1. Metadata + study design
+    |  2. Population (n, age, gender)
+    |  3. Indications + drugs + route
+    |  4. Interventions + outcomes
+    |  5. Critical appraisal
+    |
+    v
+[Verification Pass] -- Review non-null decisions
+    |
+    v
+[Outputs]
+    ├── Excel workbook (filled template)
+    ├── Word review log
+    └── JSON audit files
+```
+
+## Configuration
+
+Edit `script.py` to customize:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `OPENAI_MODEL` | `gpt-5.2` | OpenAI model for extraction |
+| `GEMINI_MODEL` | `gemini-3-pro-preview` | Google model for verification |
+| `ENABLE_PUBMED_LOOKUP` | `True` | Auto-fetch missing PMIDs |
+
+## Outputs
+
+- **Excel workbook**: Filled extraction template with all study data
+- **Word review log**: Summary of verifier decisions and conflicts
+- **Audit JSON files**: Per-paper extraction evidence for traceability
+
+## Documentation
+
+See [docs.md](docs.md) for detailed technical documentation including:
+- Excel template structure
+- Field definitions
+- Critical appraisal checklist specifications
+- LLM task design rationale
+
+## Requirements
+
+- Python 3.9+
+- OpenAI API key (for extraction)
+- Google API key (for verification)
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.

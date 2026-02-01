@@ -1,10 +1,8 @@
-# PaperChecker documentation v2 (MRONJ prevention)
+# PaperChecker Documentation
 
-This repo is designed to fill the provided Excel template:
+This pipeline extracts structured data from medical research PDFs into an Excel template format.
 
-- `Prevention of MRONJ_Extraction Sheet (Oli).xlsx`
-
-The Excel file is the fixed deliverable (structure must not change). The pipeline produces:
+The Excel template structure is auto-generated based on the `EXCEL_MAP` configuration in `script.py`. The pipeline produces:
 
 1) a filled Excel workbook (same layout as template), and  
 2) an optional Word "review log" that explains what the LLM claimed and what the verifier agreed/disagreed with.
@@ -68,7 +66,7 @@ Some appraisal sheets also have extra header rows with scoring instructions:
 
 ## 3. Field definitions (Included Articles)
 
-The pipeline maps Excel columns to stable internal keys (used by the JSON outputs and by `script_v2.py`).
+The pipeline maps Excel columns to stable internal keys (used by the JSON outputs and by `script.py`).
 
 ### Identification
 - `pmid` (PMID)
@@ -167,7 +165,7 @@ A single monolithic prompt that tries to fill every sheet tends to:
 - hallucinate negatives (writing 0 where the paper is simply silent),
 - create huge verification workloads.
 
-`script_v2.py` splits extraction into 5 smaller tasks:
+`script.py` splits extraction into 5 smaller tasks:
 
 1) **Meta + design**
 2) **Population**
