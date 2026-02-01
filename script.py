@@ -2075,7 +2075,7 @@ def run_pipeline_for_pdf(
             verifier_passes.append(vpass)
         return verifier_passes
 
-def run_task_with_verify(task_num, task_name, allowed_keys, schema_name,
+    def run_task_with_verify(task_num, task_name, allowed_keys, schema_name,
                              fields_text, sheet_key="included_articles", allowed_level_keys=None):
         """Run a single task: extract + verify immediately. Returns (task_result, verifier_passes, patch)."""
         _progress(progress_fn, f"Task {task_num}: {task_name} starting...")
