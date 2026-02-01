@@ -61,8 +61,8 @@ GEMINI_MODEL = "gemini-3-pro-preview"
 REASONING_EFFORT_OPENAI = "medium"   # none|low|medium|high|xhigh
 THINKING_LEVEL_GEMINI = "low"        # minimal|low|high
 
-MAX_VIEW_CHARS = 60000
-TASK_VIEW_CHARS = 25000
+MAX_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
+TASK_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
 VERIFIER_CHUNK_SIZE = 24
 LLM_MAX_RETRIES = 3
 LLM_BACKOFF_SECONDS = 2.0
@@ -357,8 +357,29 @@ def _resolve_anchor_row(wb, pmid):
     # 2) Otherwise, append after the last fully empty row region (do not overwrite demo-like rows with other values).
     return _find_first_truly_empty_row(ws, start_row, end_col=ws.max_column)
 
-def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map):
+def _clear_data_rows(wb, excel_map):
+    """Clear all data rows (below headers) from all sheets, keeping only headers."""
+    for sheet_key, sheet_name in (excel_map.get("sheet_key_to_name") or {}).items():
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        sheet_cfg = (excel_map.get("sheets") or {}).get(sheet_key) or {}
+        header_rows = int(sheet_cfg.get("header_rows") or 1)
+        start_row = header_rows + 1
+
+        # Delete all rows below header
+        max_row = ws.max_row
+        if max_row >= start_row:
+            ws.delete_rows(start_row, max_row - start_row + 1)
+
+
+def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map, clear_existing_data=False):
     wb = openpyxl.load_workbook(template_xlsx)
+
+    # Clear old/demo data rows if requested (typically on first PDF only)
+    if clear_existing_data:
+        _clear_data_rows(wb, excel_map)
+
     sheets_data = ((final_obj.get("record") or {}).get("sheets")) or {}
     pmid = (final_obj.get("paper_id") or {}).get("pmid")
 
@@ -1275,6 +1296,7 @@ def run_pipeline_for_pdf(
     progress_fn=print,
     use_gemini_driver=False,
     use_openai_verifier=False,
+    clear_existing_data=False,
 ):
     _progress(progress_fn, f"Starting PDF: {pdf_path}")
     pages = extract_pdf_pages(pdf_path)
@@ -1282,16 +1304,23 @@ def run_pipeline_for_pdf(
     working = _init_working_object()
     task_results = []
 
-    # ---- TASK 1: Metadata + study design classification ----
-    _progress(progress_fn, "Task 1/5: metadata + design...")
-    view1 = make_task_view(pages, keywords=["pmid", "doi", "random", "cohort", "case", "systematic review", "methods", "abstract"])
-    allowed_keys = ["pmid", "author", "year", "study_design"]
+    # ---- TASK 1: Metadata + study design classification + evidence level ----
+    _progress(progress_fn, "Task 1/5: metadata + design + evidence level...")
+    view1 = make_task_view(pages, keywords=["pmid", "doi", "random", "cohort", "case", "systematic review", "methods", "abstract", "level of evidence", "grade", "recommendation", "oxford", "sign", "grade"])
+    allowed_inc_keys = ["pmid", "author", "year", "study_design"]
+    allowed_lev_keys = ["level_of_evidence", "grade_of_recommendation"]
     schema1 = build_task_schema(
         task_name="meta_design",
-        allowed_sheet_key="included_articles",
-        allowed_included_keys=allowed_keys,
+        allowed_sheet_key=None,  # Allow both sheets
+        allowed_included_keys=allowed_inc_keys,
+        allowed_level_keys=allowed_lev_keys,
     )
-    fields_text = "- paper_id: pmid/doi/title\n- study_type: one of " + "|".join(STUDY_TYPE_ENUM) + "\n- included_articles: " + ", ".join(allowed_keys)
+    fields_text = (
+        "- paper_id: pmid/doi/title\n"
+        "- study_type: one of " + "|".join(STUDY_TYPE_ENUM) + "\n"
+        "- included_articles: " + ", ".join(allowed_inc_keys) + "\n"
+        "- level_of_evidence: level_of_evidence (e.g. '1a', '2b', 'III'), grade_of_recommendation (e.g. 'A', 'B', 'C') - extract if explicitly stated using Oxford/SIGN/GRADE/AWMF or similar framework"
+    )
     user1 = _task_user("meta_design", fields_text, view1, context_json=None)
 
     if use_gemini_driver:
@@ -1438,7 +1467,7 @@ def run_pipeline_for_pdf(
     final_obj = build_final_object(working, verifier_passes, decisions_non_null, verifier_model=verifier_model)
 
     _progress(progress_fn, "Writing Excel + Word outputs...")
-    apply_to_workbook(final_obj, template_xlsx, out_xlsx, EXCEL_MAP)
+    apply_to_workbook(final_obj, template_xlsx, out_xlsx, EXCEL_MAP, clear_existing_data=clear_existing_data)
     write_review_docx(final_obj, out_docx, append=True)
 
     audit_path = out_xlsx.replace(".xlsx", f".audit_{pmid}.json")
@@ -1477,9 +1506,12 @@ def run_pipeline(
 
     current_template = template_xlsx
     finals = []
-    for pdf in pdf_paths:
+    for idx, pdf in enumerate(pdf_paths):
         if not os.path.exists(pdf):
             raise FileNotFoundError(pdf)
+
+        # Clear old/demo data only on first PDF when using original template
+        is_first_pdf = (idx == 0)
 
         final_obj = run_pipeline_for_pdf(
             pdf_path=pdf,
@@ -1491,6 +1523,7 @@ def run_pipeline(
             progress_fn=progress_fn,
             use_gemini_driver=use_gemini_driver,
             use_openai_verifier=use_openai_verifier,
+            clear_existing_data=is_first_pdf,
         )
         current_template = out_xlsx
         finals.append(final_obj)
