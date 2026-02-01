@@ -588,6 +588,28 @@ INTEGER_COUNT_FIELDS = {
     "mronj_stage_0",
 }
 
+NUMERIC_REVIEW_FIELDS = {
+    "year",
+    "n_pts",
+    "age_mean_years",
+    "gender_male_n",
+    "gender_female_n",
+    "mronj_stage_at_risk",
+    "mronj_stage_0",
+    "follow_up_mean_months",
+    "total_score",
+}
+
+def _is_numeric_like(value) -> bool:
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == "":
+            return False
+        return re.fullmatch(r"[-+]?\d+(\.\d+)?", stripped) is not None
+    return False
+
 def _normalize_int_like(value):
     if value is None:
         return None
@@ -676,6 +698,15 @@ def apply_to_workbook(final_obj, template_xlsx, out_xlsx, excel_map, clear_exist
             row_by_sheet[sheet_key] = write_sheet(sheet_key)
 
     highlight_map = {}
+    for sheet_key, payload in (sheets_data or {}).items():
+        if not isinstance(payload, dict):
+            continue
+        for field, value in payload.items():
+            if field in NUMERIC_REVIEW_FIELDS and isinstance(value, str) and value.strip() != "" and not _is_numeric_like(value):
+                key = (sheet_key, field)
+                if _severity_rank("WARN") > _severity_rank(highlight_map.get(key, "INFO")):
+                    highlight_map[key] = "WARN"
+
     for issue in ((final_obj.get("validation") or {}).get("issues") or []):
         parsed = _parse_sheet_field_from_path(issue.get("path"))
         if not parsed:
@@ -765,7 +796,7 @@ def compute_scores_inplace(final_obj):
 
 
 # -------------------------
-# PDF TEXT (page-aware) + TARGETED VIEWS
+# PDF TEXT (page-aware)
 # -------------------------
 def extract_pdf_pages(pdf_path):
     doc = fitz.open(pdf_path)
@@ -848,16 +879,22 @@ def build_verifier_view(pages, decisions):
 # -------------------------
 # JSON SCHEMAS (task outputs)
 # -------------------------
+def _int_or_string_schema():
+    return {"type": ["integer", "string", "null"]}
+
+def _number_or_string_schema():
+    return {"type": ["number", "string", "null"]}
+
 def _sheet_schema_included_articles_partial():
     props = {
         "pmid": {"type": ["integer", "null"]},
         "author": {"type": ["string", "null"]},
-        "year": {"type": ["integer", "null"]},
+        "year": _int_or_string_schema(),
         "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
-        "n_pts": {"type": ["integer", "null"]},
-        "age_mean_years": {"type": ["number", "null"]},
-        "gender_male_n": {"type": ["integer", "null"]},
-        "gender_female_n": {"type": ["integer", "null"]},
+        "n_pts": _int_or_string_schema(),
+        "age_mean_years": _number_or_string_schema(),
+        "gender_male_n": _int_or_string_schema(),
+        "gender_female_n": _int_or_string_schema(),
         "site_maxilla": {"type": ["integer", "null"], "enum": [1, None]},
         "site_mandible": {"type": ["integer", "null"], "enum": [1, None]},
         "site_both": {"type": ["integer", "null"], "enum": [1, None]},
@@ -883,12 +920,12 @@ def _sheet_schema_included_articles_partial():
         "route_subcutaneous": {"type": ["integer", "null"], "enum": [1, None]},
         "route_both": {"type": ["integer", "null"], "enum": [1, None]},
         "route_not_reported": {"type": ["integer", "null"], "enum": [1, None]},
-        "mronj_stage_at_risk": {"type": ["integer", "null"]},
-        "mronj_stage_0": {"type": ["integer", "null"]},
+        "mronj_stage_at_risk": _int_or_string_schema(),
+        "mronj_stage_0": _int_or_string_schema(),
         "prevention_technique": {"type": ["string", "null"]},
         "group_intervention": {"type": ["string", "null"]},
         "group_control": {"type": ["string", "null"]},
-        "follow_up_mean_months": {"type": ["number", "null"]},
+        "follow_up_mean_months": _number_or_string_schema(),
         "follow_up_range": {"type": ["string", "null"]},
         "outcome_variable": {"type": ["string", "null"]},
         "mronj_development": {"type": ["string", "null"], "enum": MRONJ_DEV_ENUM + [None]},
@@ -900,7 +937,7 @@ def _sheet_schema_level_of_evidence_partial():
     props = {
         "pmid": {"type": ["integer", "null"]},
         "author": {"type": ["string", "null"]},
-        "year": {"type": ["integer", "null"]},
+        "year": _int_or_string_schema(),
         "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
         "level_of_evidence": {"type": ["string", "null"]},
         "grade_of_recommendation": {"type": ["string", "null"]},
@@ -1011,14 +1048,14 @@ def build_appraisal_schema(study_type):
             "properties": {
                 "pmid": {"type": ["integer", "null"]},
                 "author": {"type": ["string", "null"]},
-                "year": {"type": ["integer", "null"]},
+                "year": _int_or_string_schema(),
                 "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
                 "q1_randomized": {"type": ["string", "null"], "enum": ["0", "1", None]},
                 "q2_randomization_method": {"type": ["string", "null"], "enum": ["-1", "0", "+1", None]},
                 "q3_double_blind": {"type": ["string", "null"], "enum": ["0", "1", None]},
                 "q4_blinding_method": {"type": ["string", "null"], "enum": ["-1", "0", "+1", None]},
                 "q5_withdrawals_dropouts": {"type": ["string", "null"], "enum": ["0", "1", None]},
-                "total_score": {"type": ["integer", "null"]},
+                "total_score": _int_or_string_schema(),
             },
         }
     elif study_type == "cohort":
@@ -1028,7 +1065,7 @@ def build_appraisal_schema(study_type):
             "properties": {
                 "pmid": {"type": ["integer", "null"]},
                 "author": {"type": ["string", "null"]},
-                "year": {"type": ["integer", "null"]},
+                "year": _int_or_string_schema(),
                 "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
                 "q1_groups_similar": y_schema(),
                 "q2_exposures_measured_similarly": y_schema(),
@@ -1050,7 +1087,7 @@ def build_appraisal_schema(study_type):
             "properties": {
                 "pmid": {"type": ["integer", "null"]},
                 "author": {"type": ["string", "null"]},
-                "year": {"type": ["integer", "null"]},
+                "year": _int_or_string_schema(),
                 "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
                 "q1_inclusion_criteria_clear": y_schema(),
                 "q2_condition_measured_standard": y_schema(),
@@ -1062,7 +1099,7 @@ def build_appraisal_schema(study_type):
                 "q8_outcomes_followup_reported": y_schema(),
                 "q9_presenting_site_reported": y_schema(),
                 "q10_statistics_appropriate": y_schema(),
-                "total_score": {"type": ["integer", "null"]},
+                "total_score": _int_or_string_schema(),
             },
         }
     elif study_type == "case_control":
@@ -1072,7 +1109,7 @@ def build_appraisal_schema(study_type):
             "properties": {
                 "pmid": {"type": ["integer", "null"]},
                 "author": {"type": ["string", "null"]},
-                "year": {"type": ["integer", "null"]},
+                "year": _int_or_string_schema(),
                 "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
                 "q1_groups_comparable": y_schema(),
                 "q2_matched_appropriately": y_schema(),
@@ -1093,7 +1130,7 @@ def build_appraisal_schema(study_type):
             "properties": {
                 "pmid": {"type": ["integer", "null"]},
                 "author": {"type": ["string", "null"]},
-                "year": {"type": ["integer", "null"]},
+                "year": _int_or_string_schema(),
                 "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
                 "q1_pico": y_schema(),
                 "q2_protocol_predefined": y_schema(),
@@ -1109,7 +1146,7 @@ def build_appraisal_schema(study_type):
                 "q14_heterogeneity_explained": y_schema(),
                 "q15_publication_bias": y_schema(),
                 "q16_conflicts_reported": y_schema(),
-                "total_score": {"type": ["integer", "null"]},
+                "total_score": _int_or_string_schema(),
             },
         }
     else:
@@ -1208,14 +1245,14 @@ def _suggested_patch_schema():
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
-            "year": {"type": ["integer", "null"]},
+            "year": _int_or_string_schema(),
             "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
             "q1_randomized": {"type": ["string", "null"], "enum": ["0", "1", None]},
             "q2_randomization_method": {"type": ["string", "null"], "enum": ["-1", "0", "+1", None]},
             "q3_double_blind": {"type": ["string", "null"], "enum": ["0", "1", None]},
             "q4_blinding_method": {"type": ["string", "null"], "enum": ["-1", "0", "+1", None]},
             "q5_withdrawals_dropouts": {"type": ["string", "null"], "enum": ["0", "1", None]},
-            "total_score": {"type": ["integer", "null"]},
+            "total_score": _int_or_string_schema(),
         },
     }
 
@@ -1226,7 +1263,7 @@ def _suggested_patch_schema():
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
-            "year": {"type": ["integer", "null"]},
+            "year": _int_or_string_schema(),
             "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
             "q1_groups_similar": y_schema(),
             "q2_exposures_measured_similarly": y_schema(),
@@ -1249,7 +1286,7 @@ def _suggested_patch_schema():
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
-            "year": {"type": ["integer", "null"]},
+            "year": _int_or_string_schema(),
             "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
             "q1_inclusion_criteria_clear": y_schema(),
             "q2_condition_measured_standard": y_schema(),
@@ -1261,7 +1298,7 @@ def _suggested_patch_schema():
             "q8_outcomes_followup_reported": y_schema(),
             "q9_presenting_site_reported": y_schema(),
             "q10_statistics_appropriate": y_schema(),
-            "total_score": {"type": ["integer", "null"]},
+            "total_score": _int_or_string_schema(),
         },
     }
 
@@ -1272,7 +1309,7 @@ def _suggested_patch_schema():
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
-            "year": {"type": ["integer", "null"]},
+            "year": _int_or_string_schema(),
             "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
             "q1_groups_comparable": y_schema(),
             "q2_matched_appropriately": y_schema(),
@@ -1294,7 +1331,7 @@ def _suggested_patch_schema():
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
-            "year": {"type": ["integer", "null"]},
+            "year": _int_or_string_schema(),
             "study_design": {"type": ["string", "null"], "enum": STUDY_DESIGN_ENUM + [None]},
             "q1_pico": y_schema(),
             "q2_protocol_predefined": y_schema(),
@@ -1310,7 +1347,7 @@ def _suggested_patch_schema():
             "q14_heterogeneity_explained": y_schema(),
             "q15_publication_bias": y_schema(),
             "q16_conflicts_reported": y_schema(),
-            "total_score": {"type": ["integer", "null"]},
+            "total_score": _int_or_string_schema(),
         },
     }
 
@@ -2038,7 +2075,7 @@ def run_pipeline_for_pdf(
             verifier_passes.append(vpass)
         return verifier_passes
 
-    def run_task_with_verify(task_num, task_name, view_keywords, allowed_keys, schema_name,
+def run_task_with_verify(task_num, task_name, allowed_keys, schema_name,
                              fields_text, sheet_key="included_articles", allowed_level_keys=None):
         """Run a single task: extract + verify immediately. Returns (task_result, verifier_passes, patch)."""
         _progress(progress_fn, f"Task {task_num}: {task_name} starting...")
@@ -2071,7 +2108,6 @@ def run_pipeline_for_pdf(
     # ---- Define all tasks ----
     task1_config = {
         "task_num": "1/5", "task_name": "meta_design",
-        "view_keywords": ["pmid", "doi", "random", "cohort", "case", "systematic review", "methods", "abstract", "level of evidence", "grade", "recommendation", "oxford", "sign", "grade"],
         "allowed_keys": ["author", "year", "study_design"],
         "allowed_level_keys": ["level_of_evidence", "grade_of_recommendation"],
         "schema_name": "mronj_task_meta_design",
@@ -2089,7 +2125,6 @@ def run_pipeline_for_pdf(
 
     task2_config = {
         "task_num": "2/5", "task_name": "population",
-        "view_keywords": ["participants", "patients", "sample", "n=", "mean age", "male", "female", "table 1"],
         "allowed_keys": ["n_pts", "age_mean_years", "gender_male_n", "gender_female_n"],
         "schema_name": "mronj_task_population",
         "fields_text": (
@@ -2104,7 +2139,6 @@ def run_pipeline_for_pdf(
 
     task3_config = {
         "task_num": "3/5", "task_name": "indication_drugs_route_site",
-        "view_keywords": ["breast", "prostate", "myeloma", "osteoporosis", "zoled", "pamid", "alend", "rised", "iband", "etid", "clodron", "denos", "intraven", "oral", "subcut", "mandible", "maxilla"],
         "allowed_keys": [
             "site_maxilla","site_mandible","site_both",
             "primary_cause_breast_cancer","primary_cause_prostate_cancer","primary_cause_mm","primary_cause_osteoporosis","primary_cause_other",
@@ -2139,7 +2173,6 @@ def run_pipeline_for_pdf(
 
     task4_config = {
         "task_num": "4/5", "task_name": "intervention_outcomes",
-        "view_keywords": ["prevention", "dental", "extraction", "antibiotic", "photodynamic", "chlorhexidine", "follow-up", "months", "outcome", "mronj", "osteonecrosis"],
         "allowed_keys": [
             "mronj_stage_at_risk","mronj_stage_0",
             "prevention_technique","group_intervention","group_control",
@@ -2177,22 +2210,22 @@ def run_pipeline_for_pdf(
     with ThreadPoolExecutor(max_workers=4) as executor:
         future_task1 = executor.submit(
             run_task_with_verify, task1_config["task_num"], task1_config["task_name"],
-            task1_config["view_keywords"], task1_config["allowed_keys"], task1_config["schema_name"],
+            task1_config["allowed_keys"], task1_config["schema_name"],
             task1_config["fields_text"], None, task1_config["allowed_level_keys"]
         )
         future_task2 = executor.submit(
             run_task_with_verify, task2_config["task_num"], task2_config["task_name"],
-            task2_config["view_keywords"], task2_config["allowed_keys"], task2_config["schema_name"],
+            task2_config["allowed_keys"], task2_config["schema_name"],
             task2_config["fields_text"]
         )
         future_task3 = executor.submit(
             run_task_with_verify, task3_config["task_num"], task3_config["task_name"],
-            task3_config["view_keywords"], task3_config["allowed_keys"], task3_config["schema_name"],
+            task3_config["allowed_keys"], task3_config["schema_name"],
             task3_config["fields_text"]
         )
         future_task4 = executor.submit(
             run_task_with_verify, task4_config["task_num"], task4_config["task_name"],
-            task4_config["view_keywords"], task4_config["allowed_keys"], task4_config["schema_name"],
+            task4_config["allowed_keys"], task4_config["schema_name"],
             task4_config["fields_text"]
         )
 

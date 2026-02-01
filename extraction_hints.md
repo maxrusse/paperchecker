@@ -1,6 +1,6 @@
 # Extraction hints by feature/item
 
-This document summarizes what the LLM is told to extract (per field) and the keyword hints used to retrieve and verify evidence for each extracted feature/item in the pipeline. The intent is to show both **what drives the LLM answers** and **what it is expected to output**.
+This document summarizes what the LLM is told to extract (per field) and the expectations for evidence and output. The pipeline now uses full-text views (no keyword-based snippets), so the emphasis is on accurate extraction and concise evidence.
 
 ## Global extraction rules (applies to all tasks)
 - Use ONLY the provided text; do not guess.
@@ -10,8 +10,8 @@ This document summarizes what the LLM is told to extract (per field) and the key
 - If a page number can be inferred from a snippet header (e.g., “--- PAGE 3”), include that page.
 - Return strict JSON matching the schema.
 
-## Task-level retrieval hints (keyword views)
-These are the keywords passed to `make_task_view(...)` to build the focused text snippet for each extraction task.
+## Task-level extraction expectations
+Each task receives the full-text view of the paper and should limit outputs to the fields listed below.
 
 ### Task 1: meta/design
 **Fields covered and expectations**:
@@ -23,21 +23,6 @@ These are the keywords passed to `make_task_view(...)` to build the focused text
 - level_of_evidence.level_of_evidence: e.g. “1a”, “2b”, “III” — only if explicitly stated
 - level_of_evidence.grade_of_recommendation: e.g. “A”, “B”, “C” — only if explicitly stated
 
-**Hint keywords**:
-- pmid
-- doi
-- random
-- cohort
-- case
-- systematic review
-- methods
-- abstract
-- level of evidence
-- grade
-- recommendation
-- oxford
-- sign
-
 ### Task 2: population
 **Fields covered and expectations**:
 - n_pts: total number of patients/participants as integer
@@ -45,16 +30,6 @@ These are the keywords passed to `make_task_view(...)` to build the focused text
 - gender_male_n: number of male participants as integer
 - gender_female_n: number of female participants as integer
 - NOTE: Leave paper_id and study_type as null (handled by another task)
-
-**Hint keywords**:
-- participants
-- patients
-- sample
-- n=
-- mean age
-- male
-- female
-- table 1
 
 ### Task 3: indication/drugs/route/site
 **Fields covered and expectations** (flags: 1 if present, null if not mentioned):
@@ -65,25 +40,6 @@ These are the keywords passed to `make_task_view(...)` to build the focused text
 - ROUTE of administration: route_iv, route_oral, route_im, route_subcutaneous, route_both, route_not_reported
 - NOTE: Leave paper_id and study_type as null (handled by another task)
 
-**Hint keywords**:
-- breast
-- prostate
-- myeloma
-- osteoporosis
-- zoled
-- pamid
-- alend
-- rised
-- iband
-- etid
-- clodron
-- denos
-- intraven
-- oral
-- subcut
-- mandible
-- maxilla
-
 ### Task 4: intervention/outcomes
 **Fields covered and expectations**:
 - STAGING: mronj_stage_at_risk (number of patients at risk stage, integer), mronj_stage_0 (number of patients at stage 0, integer)
@@ -92,66 +48,9 @@ These are the keywords passed to `make_task_view(...)` to build the focused text
 - OUTCOMES: outcome_variable (primary outcome), mronj_development (“Yes” or “No”), mronj_development_details (details about MRONJ cases)
 - NOTE: Leave paper_id and study_type as null (handled by another task)
 
-**Hint keywords**:
-- prevention
-- dental
-- extraction
-- antibiotic
-- photodynamic
-- chlorhexidine
-- follow-up
-- months
-- outcome
-- mronj
-- osteonecrosis
-
 ### Task 5: critical appraisal (study-type specific)
 **Fields covered and expectations**:
 - Fill only the appraisal sheet for the detected study_type (schema varies by study_type).
 
-**Hint keywords**:
-- methods
-- random
-- blind
-- withdraw
-- confound
-- follow up
-- loss to follow up
-- search strategy
-- protocol
-- meta-analysis
-- risk of bias
-
-## Verifier hints by field (decision keywords)
-These keywords are used to build the verification view (`build_verifier_view(...)`) for each decision path. When the field is part of a `q*` appraisal item, the generic appraisal keyword list is used.
-
-### Bibliographic + study descriptors
-- pmid: pmid
-- doi: doi
-- title: title
-- author: author
-- year: year
-- study_design: study design, randomized, cohort, case, systematic review
-
-### Population
-- n_pts: participants, patients, sample, n=
-- age_mean_years: mean age, age
-- gender_male_n: male, men
-- gender_female_n: female, women
-
-### Intervention + outcomes
-- prevention_technique: prevention, technique
-- group_intervention: intervention, treatment
-- group_control: control, comparison
-- follow_up_mean_months: follow-up, months
-- follow_up_range: follow-up, range
-- outcome_variable: outcome, endpoint
-- mronj_development: mronj, osteonecrosis
-- mronj_development_details: mronj, osteonecrosis
-
-### Evidence grading
-- level_of_evidence: level of evidence
-- grade_of_recommendation: grade of recommendation
-
-### Critical appraisal items
-- Any appraisal field with a path leaf starting with `q`: methods, random, blind, confound, follow-up, risk of bias
+## Verifier context
+The verifier receives the full-text view and the decision list. It does not rely on keyword snippets, so evidence should be concise and clearly anchored to the paper text.
