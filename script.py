@@ -667,6 +667,62 @@ def extract_pdf_pages(pdf_path):
     doc.close()
     return pages
 
+DOI_REGEX = re.compile(r"\b10\.\d{4,9}/[^\s\"<>]+", re.IGNORECASE)
+TITLE_STOPWORDS = {
+    "abstract",
+    "introduction",
+    "keywords",
+    "correspondence",
+    "author",
+    "authors",
+    "journal",
+    "doi",
+}
+
+def _normalize_doi(doi: str) -> str:
+    doi = doi.strip()
+    doi = re.sub(r"^(doi\s*:\s*)", "", doi, flags=re.IGNORECASE)
+    return doi.rstrip(").,;")
+
+def _extract_doi(text: str) -> Optional[str]:
+    if not text:
+        return None
+    match = DOI_REGEX.search(text)
+    if not match:
+        return None
+    return _normalize_doi(match.group(0))
+
+def _extract_title_from_page(text: str) -> Optional[str]:
+    if not text:
+        return None
+    candidates = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if any(stop in lower for stop in TITLE_STOPWORDS):
+            continue
+        if sum(ch.isdigit() for ch in line) > 3:
+            continue
+        words = line.split()
+        if not (5 <= len(words) <= 25):
+            continue
+        candidates.append((len(words), len(line), line))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][2]
+
+def extract_paper_id_from_pages(pages: list[dict]) -> dict:
+    if not pages:
+        return {"doi": None, "title": None}
+    first_pages = pages[:2]
+    combined = "\n".join(p.get("text", "") for p in first_pages)
+    doi = _extract_doi(combined)
+    title = _extract_title_from_page(first_pages[0].get("text", ""))
+    return {"doi": doi, "title": title}
+
 def _clean_text(t):
     t = re.sub(r"[ \t]+\n", "\n", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
@@ -1596,6 +1652,17 @@ def _apply_patch(working, patch):
         return working
     return deep_merge(working, patch)
 
+def _prune_redundant_patch_fields(patch: Optional[dict]) -> Optional[dict]:
+    if not isinstance(patch, dict) or not patch:
+        return patch
+    cleaned = copy.deepcopy(patch)
+    paper_id = cleaned.get("paper_id")
+    if isinstance(paper_id, dict) and all(paper_id.get(k) in (None, "") for k in ("pmid", "doi", "title")):
+        cleaned.pop("paper_id", None)
+    if cleaned.get("study_type") in (None, ""):
+        cleaned.pop("study_type", None)
+    return cleaned
+
 def _collect_decisions(all_task_results):
     return dedupe_decisions(all_task_results)
 
@@ -1645,6 +1712,14 @@ def run_pipeline_for_pdf(
 ):
     _progress(progress_fn, f"Starting PDF: {pdf_path}")
     full_pages = extract_pdf_pages(pdf_path)
+    paper_id_hint = extract_paper_id_from_pages(full_pages)
+    if paper_id_hint.get("doi") or paper_id_hint.get("title"):
+        _progress(
+            progress_fn,
+            "PDF metadata hint: "
+            + f"doi={paper_id_hint.get('doi') or 'N/A'} "
+            + f"title={paper_id_hint.get('title') or 'N/A'}",
+        )
 
     verifier_fn = openai_verify_chunk if use_openai_verifier else gemini_verify_chunk
     verifier_model = OPENAI_MODEL if use_openai_verifier else GEMINI_MODEL
@@ -1699,25 +1774,26 @@ def run_pipeline_for_pdf(
 
         # Build a minimal working object for verification context
         working_snapshot = _init_working_object()
-        working_snapshot = _apply_patch(working_snapshot, task_result.get("patch"))
+        pruned_patch = _prune_redundant_patch_fields(task_result.get("patch"))
+        working_snapshot = _apply_patch(working_snapshot, pruned_patch)
 
         verifier_passes = verify_decisions(task_result, working_snapshot)
         _progress(progress_fn, f"Task {task_num}: {task_name} done.")
 
-        return (task_result, verifier_passes, task_result.get("patch"))
+        task_result["patch"] = pruned_patch
+        return (task_result, verifier_passes, pruned_patch)
 
     # ---- Define all tasks ----
     task1_config = {
         "task_num": "1/5", "task_name": "meta_design",
         "view_keywords": ["pmid", "doi", "random", "cohort", "case", "systematic review", "methods", "abstract", "level of evidence", "grade", "recommendation", "oxford", "sign", "grade"],
-        "allowed_keys": ["pmid", "author", "year", "study_design"],
+        "allowed_keys": ["author", "year", "study_design"],
         "allowed_level_keys": ["level_of_evidence", "grade_of_recommendation"],
         "schema_name": "mronj_task_meta_design",
         "fields_text": (
             "EXTRACT these fields:\n"
-            "- paper_id: pmid (PubMed ID as integer), doi, title (from paper header/abstract)\n"
+            "- paper_id: doi, title (from paper header/abstract); leave pmid null (resolved via PubMed)\n"
             "- study_type: MUST be one of: " + "|".join(STUDY_TYPE_ENUM) + "\n"
-            "- included_articles.pmid: same as paper_id.pmid\n"
             "- included_articles.author: first author surname (e.g. 'Smith')\n"
             "- included_articles.year: publication year as integer\n"
             "- included_articles.study_design: brief description (e.g. 'Retrospective cohort')\n"
@@ -1896,16 +1972,29 @@ def run_pipeline_for_pdf(
             if isinstance(patch, dict) and patch:
                 working = deep_merge(working, patch)
 
-    # Optional PMID lookup via PubMed if missing.
+    if ENABLE_PUBMED_LOOKUP:
+        working.setdefault("paper_id", {})["pmid"] = None
+
+    working.setdefault("paper_id", {})
+    if paper_id_hint.get("doi"):
+        working["paper_id"]["doi"] = paper_id_hint.get("doi")
+    if paper_id_hint.get("title"):
+        working["paper_id"]["title"] = paper_id_hint.get("title")
+
+    # Optional PMID lookup via PubMed if missing, using PDF-derived DOI/title.
     if ENABLE_PUBMED_LOOKUP and not (working.get("paper_id") or {}).get("pmid"):
-        paper_id = working.get("paper_id") or {}
-        try:
-            found_pmid = lookup_pmid_via_pubmed(paper_id.get("title"), paper_id.get("doi"))
-        except Exception as exc:
-            _progress(progress_fn, f"PubMed lookup failed: {exc}")
-            found_pmid = None
-        if found_pmid:
-            working.setdefault("paper_id", {})["pmid"] = found_pmid
+        lookup_doi = paper_id_hint.get("doi")
+        lookup_title = paper_id_hint.get("title")
+        if lookup_doi or lookup_title:
+            try:
+                found_pmid = lookup_pmid_via_pubmed(lookup_title, lookup_doi)
+            except Exception as exc:
+                _progress(progress_fn, f"PubMed lookup failed: {exc}")
+                found_pmid = None
+            if found_pmid:
+                working.setdefault("paper_id", {})["pmid"] = found_pmid
+        else:
+            _progress(progress_fn, "PubMed lookup skipped (no PDF DOI/title found).")
 
     # Ensure pmid is copied to included_articles + level_of_evidence for convenience.
     pmid = (working.get("paper_id") or {}).get("pmid")
@@ -1932,6 +2021,15 @@ def run_pipeline_for_pdf(
 
     # Collect all decisions for final object
     all_decisions = _collect_decisions(all_task_results)
+    if ENABLE_PUBMED_LOOKUP:
+        all_decisions = [
+            d for d in all_decisions
+            if d.get("path") not in (
+                "/paper_id/pmid",
+                "/record/sheets/included_articles/pmid",
+                "/record/sheets/level_of_evidence/pmid",
+            )
+        ]
     decisions_non_null = decisions_only_non_null(all_decisions)
 
     final_obj = build_final_object(working, all_verifier_passes, decisions_non_null, verifier_model=verifier_model)
