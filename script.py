@@ -1140,9 +1140,9 @@ def build_appraisal_schema(study_type):
 
 
 def _optionalize_object_schema(s: dict) -> dict:
-    """Create an optional version of an object schema (required: [])."""
+    """Create an optional version of an object schema (required: all properties)."""
     s2 = copy.deepcopy(s)
-    s2["required"] = []
+    s2["required"] = list(s2.get("properties", {}).keys())
     return s2
 
 
@@ -1160,7 +1160,18 @@ def _suggested_patch_schema():
     rct_opt = {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": [
+            "pmid",
+            "author",
+            "year",
+            "study_design",
+            "q1_randomized",
+            "q2_randomization_method",
+            "q3_double_blind",
+            "q4_blinding_method",
+            "q5_withdrawals_dropouts",
+            "total_score",
+        ],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1178,7 +1189,23 @@ def _suggested_patch_schema():
     cohort_opt = {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": [
+            "pmid",
+            "author",
+            "year",
+            "study_design",
+            "q1_groups_similar",
+            "q2_exposures_measured_similarly",
+            "q3_exposure_valid_reliable",
+            "q4_confounders_identified",
+            "q5_confounders_addressed",
+            "q6_free_of_outcome_at_start",
+            "q7_outcomes_valid_reliable",
+            "q8_followup_sufficient",
+            "q9_followup_complete",
+            "q10_address_incomplete_followup",
+            "q11_appropriate_statistics",
+        ],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1201,7 +1228,23 @@ def _suggested_patch_schema():
     case_series_opt = {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": [
+            "pmid",
+            "author",
+            "year",
+            "study_design",
+            "q1_inclusion_criteria_clear",
+            "q2_condition_measured_standard",
+            "q3_valid_identification_methods",
+            "q4_consecutive_inclusion",
+            "q5_complete_inclusion",
+            "q6_demographics_reported",
+            "q7_clinical_info_reported",
+            "q8_outcomes_followup_reported",
+            "q9_presenting_site_reported",
+            "q10_statistics_appropriate",
+            "total_score",
+        ],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1224,7 +1267,22 @@ def _suggested_patch_schema():
     case_control_opt = {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": [
+            "pmid",
+            "author",
+            "year",
+            "study_design",
+            "q1_groups_comparable",
+            "q2_matched_appropriately",
+            "q3_same_criteria_cases_controls",
+            "q4_exposure_valid_reliable",
+            "q5_exposure_measured_same_way",
+            "q6_confounders_identified",
+            "q7_confounders_addressed",
+            "q8_outcomes_assessed_standard",
+            "q9_exposure_period_long_enough",
+            "q10_appropriate_statistics",
+        ],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1246,7 +1304,27 @@ def _suggested_patch_schema():
     systematic_opt = {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": [
+            "pmid",
+            "author",
+            "year",
+            "study_design",
+            "q1_pico",
+            "q2_protocol_predefined",
+            "q3_designs_explained",
+            "q4_6_search_and_duplicates",
+            "q7_excluded_list",
+            "q8_included_described",
+            "q9_risk_of_bias",
+            "q10_funding_sources",
+            "q11_meta_analysis_methods",
+            "q12_impact_of_rob",
+            "q13_account_for_rob",
+            "q14_heterogeneity_explained",
+            "q15_publication_bias",
+            "q16_conflicts_reported",
+            "total_score",
+        ],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1274,26 +1352,34 @@ def _suggested_patch_schema():
     paper_id_opt = {
         "type": "object",
         "additionalProperties": False,
-        "required": [],
+        "required": list(PAPER_ID_SCHEMA["properties"].keys()),
         "properties": PAPER_ID_SCHEMA["properties"],
     }
 
     return {
         "type": ["object", "null"],
         "additionalProperties": False,
-        "required": [],
+        "required": ["paper_id", "study_type", "record"],
         "properties": {
             "paper_id": paper_id_opt,
             "study_type": {"type": ["string", "null"], "enum": STUDY_TYPE_ENUM + [None]},
             "record": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": [],
+                "required": ["sheets"],
                 "properties": {
                     "sheets": {
                         "type": "object",
                         "additionalProperties": False,
-                        "required": [],
+                        "required": [
+                            "included_articles",
+                            "level_of_evidence",
+                            "rct_appraisal",
+                            "cohort_appraisal",
+                            "case_series_appraisal",
+                            "case_control_appraisal",
+                            "systematic_appraisal",
+                        ],
                         "properties": {
                             "included_articles": inc_opt,
                             "level_of_evidence": lev_opt,
