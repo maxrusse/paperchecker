@@ -38,6 +38,10 @@ pip install -r requirements.txt
 # Set API keys
 export OPENAI_API_KEY="your-key"
 export GOOGLE_API_KEY="your-key"
+
+# Optional PubMed lookup
+export PUBMED_API_KEY="your-key"
+export PUBMED_EMAIL="you@example.com"
 ```
 
 ## Usage
@@ -47,8 +51,8 @@ from script import run_pipeline
 
 results = run_pipeline(
     pdf_paths=["paper1.pdf", "paper2.pdf"],
-    out_xlsx="output/extraction.xlsx",
-    out_docx="output/review_log.docx",
+    out_xlsx="output/mronj_extraction.xlsx",
+    out_docx="output/mronj_review_log.docx",
 )
 ```
 
@@ -90,9 +94,9 @@ Edit `script.py` to customize:
 
 ## Outputs
 
-- **Excel workbook**: Filled extraction template with all study data
-- **Word review log**: Summary of verifier decisions and conflicts
-- **Audit JSON files**: Per-paper extraction evidence for traceability
+- **Excel workbook**: `output/mronj_extraction_YYYYMMDD_HHMMSS.xlsx` (filled template with all study data)
+- **Word review log**: `output/mronj_review_log_YYYYMMDD_HHMMSS.docx` (verifier decisions and conflicts)
+- **Audit JSON files**: `output/mronj_extraction_YYYYMMDD_HHMMSS.audit_<PMID>.json` (per-paper evidence)
 
 ## Documentation
 
@@ -102,11 +106,14 @@ See [docs.md](docs.md) for detailed technical documentation including:
 - Critical appraisal checklist specifications
 - LLM task design rationale
 
+See [extraction_hints.md](extraction_hints.md) for the keyword hints and field-level extraction rules.
+
 ## Requirements
 
 - Python 3.9+
 - OpenAI API key (for extraction)
 - Google API key (for verification)
+- Optional PubMed API key + email (for PMID lookup)
 
 ## License
 
