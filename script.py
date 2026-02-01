@@ -50,7 +50,7 @@ PDF_PATHS = [
     # "/mnt/data/paper1.pdf",
 ]
 
-TEMPLATE_XLSX = "/mnt/data/Prevention of MRONJ_Extraction Sheet (Oli).xlsx"
+TEMPLATE_XLSX = None  # Auto-generated from EXCEL_MAP structure (set path to use custom template)
 OUT_XLSX = f"/mnt/data/mronj_prevention_filled_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.xlsx"
 OUT_DOCX = f"/mnt/data/mronj_prevention_review_log_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.docx"
 
@@ -310,6 +310,173 @@ def column_index_from_string(col):
     for c in col:
         idx = idx * 26 + (ord(c) - ord("A") + 1)
     return idx
+
+
+# Human-readable column headers
+COLUMN_DISPLAY_NAMES = {
+    # Common fields
+    "pmid": "PMID",
+    "author": "Author",
+    "year": "Year",
+    "study_design": "Study Design",
+    # Included Articles
+    "n_pts": "N (Patients)",
+    "age_mean_years": "Age (Mean, Years)",
+    "gender_male_n": "Male (n)",
+    "gender_female_n": "Female (n)",
+    "site_maxilla": "Maxilla",
+    "site_mandible": "Mandible",
+    "site_both": "Both Sites",
+    "primary_cause_breast_cancer": "Breast Cancer",
+    "primary_cause_prostate_cancer": "Prostate Cancer",
+    "primary_cause_mm": "Multiple Myeloma",
+    "primary_cause_osteoporosis": "Osteoporosis",
+    "primary_cause_other": "Other Cause",
+    "ards_bisphosphonates_zoledronate": "Zoledronate",
+    "ards_bisphosphonates_pamidronate": "Pamidronate",
+    "ards_bisphosphonates_risedronate": "Risedronate",
+    "ards_bisphosphonates_alendronate": "Alendronate",
+    "ards_bisphosphonates_ibandronate": "Ibandronate",
+    "ards_bisphosphonates_combination": "BP Combination",
+    "ards_bisphosphonates_etidronate": "Etidronate",
+    "ards_bisphosphonates_clodronate": "Clodronate",
+    "ards_bisphosphonates_unknown_other": "BP Unknown/Other",
+    "ards_denosumab": "Denosumab",
+    "ards_both": "BP + Denosumab",
+    "route_iv": "IV",
+    "route_oral": "Oral",
+    "route_im": "IM",
+    "route_subcutaneous": "Subcutaneous",
+    "route_both": "Multiple Routes",
+    "route_not_reported": "Route Not Reported",
+    "mronj_stage_at_risk": "At Risk Stage",
+    "mronj_stage_0": "Stage 0",
+    "prevention_technique": "Prevention Technique",
+    "group_intervention": "Intervention Group",
+    "group_control": "Control Group",
+    "follow_up_mean_months": "Follow-up (Mean, Months)",
+    "follow_up_range": "Follow-up Range",
+    "outcome_variable": "Outcome Variable",
+    "mronj_development": "MRONJ Development",
+    "mronj_development_details": "MRONJ Details",
+    # Level of Evidence
+    "level_of_evidence": "Level of Evidence",
+    "grade_of_recommendation": "Grade of Recommendation",
+    # RCT Appraisal (Jadad)
+    "q1_randomized": "Q1: Randomized (0/1)",
+    "q2_randomization_method": "Q2: Method Described (-1/0/+1)",
+    "q3_double_blind": "Q3: Double Blind (0/1)",
+    "q4_blinding_method": "Q4: Blinding Method (-1/0/+1)",
+    "q5_withdrawals_dropouts": "Q5: Withdrawals (0/1)",
+    "total_score": "Total Score",
+    # Cohort Appraisal
+    "q1_groups_similar": "Q1: Groups Similar",
+    "q2_exposures_measured_similarly": "Q2: Exposures Measured Similarly",
+    "q3_exposure_valid_reliable": "Q3: Exposure Valid/Reliable",
+    "q4_confounders_identified": "Q4: Confounders Identified",
+    "q5_confounders_addressed": "Q5: Confounders Addressed",
+    "q6_free_of_outcome_at_start": "Q6: Free of Outcome at Start",
+    "q7_outcomes_valid_reliable": "Q7: Outcomes Valid/Reliable",
+    "q8_followup_sufficient": "Q8: Follow-up Sufficient",
+    "q9_followup_complete": "Q9: Follow-up Complete",
+    "q10_address_incomplete_followup": "Q10: Incomplete Follow-up Addressed",
+    "q11_appropriate_statistics": "Q11: Appropriate Statistics",
+    # Case Series Appraisal
+    "q1_inclusion_criteria_clear": "Q1: Inclusion Criteria Clear",
+    "q2_condition_measured_standard": "Q2: Condition Measured Standard",
+    "q3_valid_identification_methods": "Q3: Valid Identification Methods",
+    "q4_consecutive_inclusion": "Q4: Consecutive Inclusion",
+    "q5_complete_inclusion": "Q5: Complete Inclusion",
+    "q6_demographics_reported": "Q6: Demographics Reported",
+    "q7_clinical_info_reported": "Q7: Clinical Info Reported",
+    "q8_outcomes_followup_reported": "Q8: Outcomes/Follow-up Reported",
+    "q9_presenting_site_reported": "Q9: Presenting Site Reported",
+    "q10_statistics_appropriate": "Q10: Statistics Appropriate",
+    # Case Control Appraisal
+    "q1_groups_comparable": "Q1: Groups Comparable",
+    "q2_matched_appropriately": "Q2: Matched Appropriately",
+    "q3_same_criteria_cases_controls": "Q3: Same Criteria Cases/Controls",
+    "q4_exposure_valid_reliable": "Q4: Exposure Valid/Reliable",
+    "q5_exposure_measured_same_way": "Q5: Exposure Measured Same Way",
+    "q6_confounders_identified": "Q6: Confounders Identified",
+    "q7_confounders_addressed": "Q7: Confounders Addressed",
+    "q8_outcomes_assessed_standard": "Q8: Outcomes Assessed Standard",
+    "q9_exposure_period_long_enough": "Q9: Exposure Period Sufficient",
+    "q10_appropriate_statistics": "Q10: Appropriate Statistics",
+    # Systematic Review Appraisal (AMSTAR-2)
+    "q1_pico": "Q1: PICO",
+    "q2_protocol_predefined": "Q2: Protocol Predefined",
+    "q3_designs_explained": "Q3: Designs Explained",
+    "q4_6_search_and_duplicates": "Q4-6: Search & Duplicates",
+    "q7_excluded_list": "Q7: Excluded List",
+    "q8_included_described": "Q8: Included Described",
+    "q9_risk_of_bias": "Q9: Risk of Bias",
+    "q10_funding_sources": "Q10: Funding Sources",
+    "q11_meta_analysis_methods": "Q11: Meta-analysis Methods",
+    "q12_impact_of_rob": "Q12: Impact of RoB",
+    "q13_account_for_rob": "Q13: Account for RoB",
+    "q14_heterogeneity_explained": "Q14: Heterogeneity Explained",
+    "q15_publication_bias": "Q15: Publication Bias",
+    "q16_conflicts_reported": "Q16: Conflicts Reported",
+}
+
+
+def create_template_workbook(excel_map):
+    """Generate a fresh Excel workbook with headers based on EXCEL_MAP structure."""
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    # Remove default sheet
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+
+    header_font = Font(bold=True)
+    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for sheet_key, sheet_name in excel_map.get("sheet_key_to_name", {}).items():
+        ws = wb.create_sheet(title=sheet_name)
+        sheet_cfg = excel_map.get("sheets", {}).get(sheet_key, {})
+        header_rows = int(sheet_cfg.get("header_rows", 1))
+        columns = sheet_cfg.get("columns", {})
+
+        # Sort columns by their Excel column letter
+        sorted_cols = sorted(columns.items(), key=lambda x: (len(x[1]), x[1]))
+
+        # Write headers in the last header row (so data starts right after)
+        header_row = header_rows
+        for field_name, col_letter in sorted_cols:
+            col_idx = column_index_from_string(col_letter)
+            display_name = COLUMN_DISPLAY_NAMES.get(field_name, field_name.replace("_", " ").title())
+            cell = ws.cell(row=header_row, column=col_idx, value=display_name)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+
+        # Set reasonable column widths
+        for field_name, col_letter in sorted_cols:
+            col_idx = column_index_from_string(col_letter)
+            display_name = COLUMN_DISPLAY_NAMES.get(field_name, field_name)
+            # Width based on header length, with min/max bounds
+            width = max(10, min(30, len(display_name) + 2))
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+        # Freeze header rows
+        ws.freeze_panes = ws.cell(row=header_rows + 1, column=1)
+
+    return wb
+
+
+def get_or_create_template(template_path, excel_map):
+    """Load existing template or create new one if not found."""
+    if template_path and os.path.exists(template_path):
+        return template_path
+    # Generate fresh template
+    generated_path = "/tmp/paperchecker_template.xlsx"
+    wb = create_template_workbook(excel_map)
+    wb.save(generated_path)
+    return generated_path
 
 def _row_has_any_values(ws, row_idx, start_col=1, end_col=None):
     end_col = end_col or ws.max_column
@@ -1086,51 +1253,133 @@ def openai_verify_chunk(oai_client, view_text, driver_json, decisions_to_review)
 # WORD REPORT
 # -------------------------
 def write_review_docx(final_obj, docx_path, append=True):
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.table import Wd_Table_Alignment
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import nsdecls
+    from docx.oxml import parse_xml
+
     if append and os.path.exists(docx_path):
         doc = Document(docx_path)
         doc.add_page_break()
     else:
         doc = Document()
-        doc.add_heading("MRONJ prevention extraction - review log", level=0)
+        doc.add_heading("MRONJ Prevention Extraction - Review Log", level=0)
 
     paper_id = final_obj.get("paper_id") or {}
     pmid = paper_id.get("pmid")
     doi = paper_id.get("doi")
     title = paper_id.get("title")
 
-    doc.add_heading(f"PMID: {pmid if pmid is not None else 'null'}", level=1)
+    # Paper header section
+    doc.add_heading(f"PMID: {pmid if pmid is not None else 'N/A'}", level=1)
     if title:
-        doc.add_paragraph("Title: " + str(title))
+        p = doc.add_paragraph()
+        p.add_run("Title: ").bold = True
+        p.add_run(str(title))
     if doi:
-        doc.add_paragraph("DOI: " + str(doi))
-    doc.add_paragraph("Study type: " + str(final_obj.get("study_type")))
+        p = doc.add_paragraph()
+        p.add_run("DOI: ").bold = True
+        p.add_run(str(doi))
+
+    p = doc.add_paragraph()
+    p.add_run("Study Type: ").bold = True
+    p.add_run(str(final_obj.get("study_type", "N/A")))
 
     needs = ((final_obj.get("validation") or {}).get("needs_human_review"))
-    doc.add_paragraph("Needs human review: " + ("YES" if needs else "NO"))
+    p = doc.add_paragraph()
+    p.add_run("Needs Human Review: ").bold = True
+    status_run = p.add_run("YES" if needs else "NO")
+    if needs:
+        status_run.font.color.rgb = RGBColor(192, 0, 0)  # Red for YES
+        status_run.bold = True
+    else:
+        status_run.font.color.rgb = RGBColor(0, 128, 0)  # Green for NO
 
-    doc.add_heading("Verifier decisions (non-null fields only)", level=2)
-    t = doc.add_table(rows=1, cols=4)
-    t.style = "Table Grid"
-    hdr = t.rows[0].cells
-    hdr[0].text = "path"
-    hdr[1].text = "status"
-    hdr[2].text = "explanation"
-    hdr[3].text = "evidence"
+    # Verifier decisions table
+    doc.add_heading("Extraction Decisions", level=2)
 
-    for cd in (final_obj.get("verification") or {}).get("critical_decisions") or []:
-        r = t.add_row().cells
-        r[0].text = str(cd.get("path", ""))
-        r[1].text = str(cd.get("status", ""))
-        r[2].text = str(cd.get("explanation", ""))
-        r[3].text = str(cd.get("evidence", ""))
+    decisions = (final_obj.get("verification") or {}).get("critical_decisions") or []
+    if not decisions:
+        doc.add_paragraph("No decisions recorded.")
+    else:
+        # Create table with 5 columns: Field, Value, Status, Explanation, Evidence
+        t = doc.add_table(rows=1, cols=5)
+        t.style = "Table Grid"
+        t.alignment = Wd_Table_Alignment.LEFT
 
-    doc.add_heading("Validation issues", level=2)
+        # Header row styling
+        hdr = t.rows[0].cells
+        headers = ["Field", "Value", "Status", "Explanation", "Evidence"]
+        for i, (cell, header_text) in enumerate(zip(hdr, headers)):
+            cell.text = header_text
+            # Bold header
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.bold = True
+                    run.font.size = Pt(10)
+            # Light blue background
+            shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="D9E1F2"/>')
+            cell._tc.get_or_add_tcPr().append(shading)
+
+        # Data rows
+        for cd in decisions:
+            row = t.add_row().cells
+            path = str(cd.get("path", ""))
+            # Extract just the field name from path like /record/sheets/included_articles/n_pts
+            field_name = path.split("/")[-1] if "/" in path else path
+            display_name = COLUMN_DISPLAY_NAMES.get(field_name, field_name.replace("_", " ").title())
+
+            row[0].text = display_name
+            row[1].text = str(cd.get("final_value", "")) if cd.get("final_value") is not None else ""
+            row[2].text = str(cd.get("status", ""))
+            row[3].text = str(cd.get("explanation", ""))
+            row[4].text = str(cd.get("evidence", ""))
+
+            # Color status cell
+            status = cd.get("status", "")
+            if status == "AGREE":
+                shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="C6EFCE"/>')  # Light green
+            elif status == "DISAGREE":
+                shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFC7CE"/>')  # Light red
+            else:
+                shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="FFEB9C"/>')  # Light yellow
+            row[2]._tc.get_or_add_tcPr().append(shading)
+
+            # Set font size for all cells
+            for cell in row:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size = Pt(9)
+
+        # Set column widths (approximate)
+        for row in t.rows:
+            row.cells[0].width = Inches(1.5)   # Field
+            row.cells[1].width = Inches(1.2)   # Value
+            row.cells[2].width = Inches(0.8)   # Status
+            row.cells[3].width = Inches(2.5)   # Explanation
+            row.cells[4].width = Inches(2.5)   # Evidence
+
+    # Validation issues section
+    doc.add_heading("Validation Issues", level=2)
     issues = (final_obj.get("validation") or {}).get("issues") or []
     if not issues:
         doc.add_paragraph("None.")
     else:
         for it in issues:
-            doc.add_paragraph(f"[{it.get('severity')}] {it.get('code')}: {it.get('message')} (path={it.get('path')})")
+            severity = it.get("severity", "INFO")
+            p = doc.add_paragraph()
+            severity_run = p.add_run(f"[{severity}] ")
+            severity_run.bold = True
+            if severity == "CRITICAL":
+                severity_run.font.color.rgb = RGBColor(192, 0, 0)
+            elif severity == "WARN":
+                severity_run.font.color.rgb = RGBColor(192, 128, 0)
+            p.add_run(f"{it.get('code', '')}: {it.get('message', '')}")
+            if it.get("path"):
+                path_run = p.add_run(f" (path: {it.get('path')})")
+                path_run.font.size = Pt(8)
+                path_run.font.color.rgb = RGBColor(128, 128, 128)
 
     doc.save(docx_path)
 
@@ -1480,7 +1729,7 @@ def run_pipeline_for_pdf(
 
 def run_pipeline(
     pdf_paths=None,
-    template_xlsx=TEMPLATE_XLSX,
+    template_xlsx=None,
     out_xlsx=OUT_XLSX,
     out_docx=OUT_DOCX,
     openai_api_key=None,
@@ -1491,8 +1740,10 @@ def run_pipeline(
 ):
     if not pdf_paths:
         raise RuntimeError("pdf_paths is empty. Provide at least one PDF path.")
-    if not os.path.exists(template_xlsx):
-        raise FileNotFoundError(template_xlsx)
+
+    # Use provided template or generate fresh one
+    actual_template = get_or_create_template(template_xlsx, EXCEL_MAP)
+    _progress(progress_fn, f"Using template: {actual_template}")
 
     openai_key = openai_api_key or os.getenv("OPENAI_API_KEY")
     google_key = google_api_key or os.getenv("GOOGLE_API_KEY")
@@ -1504,7 +1755,7 @@ def run_pipeline(
     oai_client = OpenAI(api_key=openai_key)
     gclient = genai.Client(api_key=google_key)
 
-    current_template = template_xlsx
+    current_template = actual_template
     finals = []
     for idx, pdf in enumerate(pdf_paths):
         if not os.path.exists(pdf):
