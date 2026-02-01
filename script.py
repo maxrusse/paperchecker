@@ -1147,31 +1147,37 @@ def _optionalize_object_schema(s: dict) -> dict:
 
 
 def _suggested_patch_schema():
-    """Build schema for verifier suggested_patch that satisfies OpenAI strict mode."""
-    # Helper for Y/N/U/A enum fields used in appraisal sheets
+    """
+    suggested_patch is ALWAYS an object (never null) so we avoid object|null unions
+    that can break OpenAI's strict schema validation.
+
+    It is "deeply optional": required lists are empty at every level, so the model
+    can return {} when no corrections are needed, or only the corrected fields.
+    """
     def y_schema():
         return {"type": ["string", "null"], "enum": APPRAISAL_YNUA_ENUM + [None]}
 
-    # Optional versions of main sheet schemas
-    inc_opt = _optionalize_object_schema(_sheet_schema_included_articles_partial())
-    lev_opt = _optionalize_object_schema(_sheet_schema_level_of_evidence_partial())
-
-    # Appraisal sheet optional schemas (all fields optional)
-    rct_opt = {
+    paper_id_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": [
-            "pmid",
-            "author",
-            "year",
-            "study_design",
-            "q1_randomized",
-            "q2_randomization_method",
-            "q3_double_blind",
-            "q4_blinding_method",
-            "q5_withdrawals_dropouts",
-            "total_score",
-        ],
+        "required": [],
+        "properties": {
+            "pmid": {"type": ["integer", "null"]},
+            "doi": {"type": ["string", "null"]},
+            "title": {"type": ["string", "null"]},
+        },
+    }
+
+    included_articles_obj = copy.deepcopy(_sheet_schema_included_articles_partial())
+    included_articles_obj["required"] = []
+
+    level_of_evidence_obj = copy.deepcopy(_sheet_schema_level_of_evidence_partial())
+    level_of_evidence_obj["required"] = []
+
+    rct_obj = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1186,26 +1192,10 @@ def _suggested_patch_schema():
         },
     }
 
-    cohort_opt = {
+    cohort_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": [
-            "pmid",
-            "author",
-            "year",
-            "study_design",
-            "q1_groups_similar",
-            "q2_exposures_measured_similarly",
-            "q3_exposure_valid_reliable",
-            "q4_confounders_identified",
-            "q5_confounders_addressed",
-            "q6_free_of_outcome_at_start",
-            "q7_outcomes_valid_reliable",
-            "q8_followup_sufficient",
-            "q9_followup_complete",
-            "q10_address_incomplete_followup",
-            "q11_appropriate_statistics",
-        ],
+        "required": [],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1225,26 +1215,10 @@ def _suggested_patch_schema():
         },
     }
 
-    case_series_opt = {
+    case_series_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": [
-            "pmid",
-            "author",
-            "year",
-            "study_design",
-            "q1_inclusion_criteria_clear",
-            "q2_condition_measured_standard",
-            "q3_valid_identification_methods",
-            "q4_consecutive_inclusion",
-            "q5_complete_inclusion",
-            "q6_demographics_reported",
-            "q7_clinical_info_reported",
-            "q8_outcomes_followup_reported",
-            "q9_presenting_site_reported",
-            "q10_statistics_appropriate",
-            "total_score",
-        ],
+        "required": [],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1264,25 +1238,10 @@ def _suggested_patch_schema():
         },
     }
 
-    case_control_opt = {
+    case_control_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": [
-            "pmid",
-            "author",
-            "year",
-            "study_design",
-            "q1_groups_comparable",
-            "q2_matched_appropriately",
-            "q3_same_criteria_cases_controls",
-            "q4_exposure_valid_reliable",
-            "q5_exposure_measured_same_way",
-            "q6_confounders_identified",
-            "q7_confounders_addressed",
-            "q8_outcomes_assessed_standard",
-            "q9_exposure_period_long_enough",
-            "q10_appropriate_statistics",
-        ],
+        "required": [],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1301,30 +1260,10 @@ def _suggested_patch_schema():
         },
     }
 
-    systematic_opt = {
+    systematic_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": [
-            "pmid",
-            "author",
-            "year",
-            "study_design",
-            "q1_pico",
-            "q2_protocol_predefined",
-            "q3_designs_explained",
-            "q4_6_search_and_duplicates",
-            "q7_excluded_list",
-            "q8_included_described",
-            "q9_risk_of_bias",
-            "q10_funding_sources",
-            "q11_meta_analysis_methods",
-            "q12_impact_of_rob",
-            "q13_account_for_rob",
-            "q14_heterogeneity_explained",
-            "q15_publication_bias",
-            "q16_conflicts_reported",
-            "total_score",
-        ],
+        "required": [],
         "properties": {
             "pmid": {"type": ["integer", "null"]},
             "author": {"type": ["string", "null"]},
@@ -1348,50 +1287,36 @@ def _suggested_patch_schema():
         },
     }
 
-    # Optional paper_id schema
-    paper_id_opt = {
+    sheets_obj = {
         "type": "object",
         "additionalProperties": False,
-        "required": list(PAPER_ID_SCHEMA["properties"].keys()),
-        "properties": PAPER_ID_SCHEMA["properties"],
+        "required": [],
+        "properties": {
+            "included_articles": included_articles_obj,
+            "level_of_evidence": level_of_evidence_obj,
+            "rct_appraisal": rct_obj,
+            "cohort_appraisal": cohort_obj,
+            "case_series_appraisal": case_series_obj,
+            "case_control_appraisal": case_control_obj,
+            "systematic_appraisal": systematic_obj,
+        },
+    }
+
+    record_obj = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
+        "properties": {"sheets": sheets_obj},
     }
 
     return {
-        "type": ["object", "null"],
+        "type": "object",
         "additionalProperties": False,
-        "required": ["paper_id", "study_type", "record"],
+        "required": [],
         "properties": {
-            "paper_id": paper_id_opt,
+            "paper_id": paper_id_obj,
             "study_type": {"type": ["string", "null"], "enum": STUDY_TYPE_ENUM + [None]},
-            "record": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["sheets"],
-                "properties": {
-                    "sheets": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": [
-                            "included_articles",
-                            "level_of_evidence",
-                            "rct_appraisal",
-                            "cohort_appraisal",
-                            "case_series_appraisal",
-                            "case_control_appraisal",
-                            "systematic_appraisal",
-                        ],
-                        "properties": {
-                            "included_articles": inc_opt,
-                            "level_of_evidence": lev_opt,
-                            "rct_appraisal": rct_opt,
-                            "cohort_appraisal": cohort_opt,
-                            "case_series_appraisal": case_series_opt,
-                            "case_control_appraisal": case_control_opt,
-                            "systematic_appraisal": systematic_opt,
-                        },
-                    }
-                },
-            },
+            "record": record_obj,
         },
     }
 
