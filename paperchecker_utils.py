@@ -12,11 +12,36 @@ def normalize_string(value: Any) -> Any:
     return stripped if stripped != "" else None
 
 
-ILLEGAL_EXCEL_CHARS_RE = re.compile(r"[\000-\010]|[\013-\014]|[\016-\037]")
+# Comprehensive pattern for illegal XML/Office characters:
+# - \x00-\x08: Control characters (NUL through BS)
+# - \x0b-\x0c: Vertical tab and form feed
+# - \x0e-\x1f: Control characters (SO through US)
+# - \ud800-\udfff: UTF-16 surrogate pairs (invalid in XML)
+# - \ufffe-\uffff: Non-characters
+try:
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+except ImportError:
+    ILLEGAL_CHARACTERS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+# Extended pattern that also handles surrogate pairs and other problematic chars
+ILLEGAL_OFFICE_CHARS_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]"
+)
+
+
+def sanitize_for_office(value: str) -> str:
+    """Remove all characters illegal in Office documents (Excel/Word).
+
+    This handles control characters, surrogate pairs, and other problematic
+    Unicode characters that can cause IllegalCharacterError in openpyxl
+    or similar errors in python-docx.
+    """
+    return ILLEGAL_OFFICE_CHARS_RE.sub("", value)
 
 
 def sanitize_excel_string(value: str) -> str:
-    return ILLEGAL_EXCEL_CHARS_RE.sub("", value)
+    """Legacy wrapper - use sanitize_for_office for new code."""
+    return sanitize_for_office(value)
 
 
 def normalize_excel_value(value: Any) -> Any:

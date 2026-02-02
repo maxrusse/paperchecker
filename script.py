@@ -39,6 +39,7 @@ from paperchecker_utils import (
     json_pointer_get,
     normalize_excel_value,
     normalize_pmid,
+    sanitize_for_office,
     values_match,
 )
 
@@ -1716,7 +1717,7 @@ def write_review_docx(final_obj, docx_path, append=True):
             return ""
         if not isinstance(value, str):
             value = str(value)
-        return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", value)
+        return sanitize_for_office(value)
 
     if append and os.path.exists(docx_path):
         doc = Document(docx_path)
