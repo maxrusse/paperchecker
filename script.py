@@ -1709,6 +1709,14 @@ def write_review_docx(final_obj, docx_path, append=True):
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import nsdecls
     from docx.oxml import parse_xml
+    import re
+
+    def _sanitize_docx_text(value):
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            value = str(value)
+        return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", value)
 
     if append and os.path.exists(docx_path):
         doc = Document(docx_path)
@@ -1727,15 +1735,15 @@ def write_review_docx(final_obj, docx_path, append=True):
     if title:
         p = doc.add_paragraph()
         p.add_run("Title: ").bold = True
-        p.add_run(str(title))
+        p.add_run(_sanitize_docx_text(title))
     if doi:
         p = doc.add_paragraph()
         p.add_run("DOI: ").bold = True
-        p.add_run(str(doi))
+        p.add_run(_sanitize_docx_text(doi))
 
     p = doc.add_paragraph()
     p.add_run("Study Type: ").bold = True
-    p.add_run(str(final_obj.get("study_type", "N/A")))
+    p.add_run(_sanitize_docx_text(final_obj.get("study_type", "N/A")))
 
     needs = ((final_obj.get("validation") or {}).get("needs_human_review"))
     p = doc.add_paragraph()
@@ -1761,7 +1769,7 @@ def write_review_docx(final_obj, docx_path, append=True):
             if confidence is not None:
                 p.add_run(f" (confidence: {confidence:.2f})")
             if note_text:
-                p.add_run(": " + str(note_text))
+                p.add_run(": " + _sanitize_docx_text(note_text))
 
     # Verifier decisions table
     doc.add_heading("Extraction Decisions", level=2)
@@ -1797,11 +1805,11 @@ def write_review_docx(final_obj, docx_path, append=True):
             field_name = path.split("/")[-1] if "/" in path else path
             display_name = COLUMN_DISPLAY_NAMES.get(field_name, field_name.replace("_", " ").title())
 
-            row[0].text = display_name
-            row[1].text = str(cd.get("final_value", "")) if cd.get("final_value") is not None else ""
-            row[2].text = str(cd.get("status", ""))
-            row[3].text = str(cd.get("explanation", ""))
-            row[4].text = str(cd.get("evidence", ""))
+            row[0].text = _sanitize_docx_text(display_name)
+            row[1].text = _sanitize_docx_text(cd.get("final_value", "")) if cd.get("final_value") is not None else ""
+            row[2].text = _sanitize_docx_text(cd.get("status", ""))
+            row[3].text = _sanitize_docx_text(cd.get("explanation", ""))
+            row[4].text = _sanitize_docx_text(cd.get("evidence", ""))
 
             # Color status cell
             status = cd.get("status", "")
@@ -1842,9 +1850,9 @@ def write_review_docx(final_obj, docx_path, append=True):
                 severity_run.font.color.rgb = RGBColor(192, 0, 0)
             elif severity == "WARN":
                 severity_run.font.color.rgb = RGBColor(192, 128, 0)
-            p.add_run(f"{it.get('code', '')}: {it.get('message', '')}")
+            p.add_run(_sanitize_docx_text(f"{it.get('code', '')}: {it.get('message', '')}"))
             if it.get("path"):
-                path_run = p.add_run(f" (path: {it.get('path')})")
+                path_run = p.add_run(_sanitize_docx_text(f" (path: {it.get('path')})"))
                 path_run.font.size = Pt(8)
                 path_run.font.color.rgb = RGBColor(128, 128, 128)
 
