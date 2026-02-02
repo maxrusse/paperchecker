@@ -1,9 +1,10 @@
-version: 1
+version: 2
 title: Extraction hints by feature/item
 summary: >
   Structured, single-source extraction rules for humans and the LLM. Use ONLY the
   provided paper text; do not guess. Prefer explicit statements. Return null when
   ambiguous or not reported.
+
 global_rules:
   - Use ONLY the provided text; do not guess.
   - If not reported, return null.
@@ -14,6 +15,7 @@ global_rules:
   - >
     Keep values structured: numbers as numbers (not strings), enums/tokens exactly as defined,
     and free-text fields concise.
+
 frameworks:
   awmf_s3_alignment:
     purpose: >
@@ -28,19 +30,35 @@ frameworks:
       - Only populate level_of_evidence or grade_of_recommendation if explicitly stated
         or if the run provides a predefined framework mapping.
       - Use study_design tokens that match the Excel template validations whenever possible.
+
 tasks:
+  # =============================================================================
+  # TASK 1: META + DESIGN IDENTIFICATION
+  # =============================================================================
   - name: meta_design
-    description: Meta + design identification fields.
+    description: >
+      Paper identification and study design classification. Extract bibliographic
+      metadata and determine the study type for downstream appraisal routing.
     fields:
+      # -- Paper identification --
       - key: paper_id.doi
         type: string|null
-        expectations: DOI from paper header/abstract when explicitly stated.
+        expectations: >
+          Digital Object Identifier from paper header, footer, or abstract.
+          Format: "10.xxxx/..." - extract only if explicitly printed in the document.
+          Do NOT fabricate or look up DOIs.
       - key: paper_id.title
         type: string|null
-        expectations: Paper title from header/abstract when explicitly stated.
+        expectations: >
+          Full paper title exactly as it appears in the document header or title page.
+          Preserve original capitalization and punctuation.
       - key: paper_id.pmid
         type: null
-        expectations: Leave null; resolved via PubMed.
+        expectations: >
+          Always leave null. PubMed ID is resolved programmatically via PubMed API
+          after extraction, not extracted from the paper text.
+
+      # -- Study classification --
       - key: study_type
         type: enum
         allowed:
@@ -52,139 +70,634 @@ tasks:
           - Prospective Case Series
           - Systematic Review
           - Metaanalysis
-        expectations: MUST be one of the allowed values.
+        expectations: >
+          MUST be exactly one of the allowed values. This determines which critical
+          appraisal checklist will be used. Look for explicit statements like
+          "randomized controlled trial", "retrospective cohort study", etc.
+          If unclear between prospective/retrospective, check if data was collected
+          before (retrospective) or after (prospective) study design was established.
+
+      # -- Author/year for citation --
       - key: included_articles.author
         type: string|null
-        expectations: First author surname (e.g., "Smith").
+        expectations: >
+          First author surname only (e.g., "Smith", "Garcia-Lopez").
+          For hyphenated names, include the full hyphenated surname.
+          Do NOT include first names or initials.
       - key: included_articles.year
         type: integer|null
-        expectations: Publication year as integer.
+        expectations: >
+          Publication year as a 4-digit integer (e.g., 2019, not "2019").
+          Use the year printed on the paper, not online-first dates.
+
+      # -- Study design description --
       - key: included_articles.study_design
         type: string|null
-        expectations: Brief description; match template tokens when possible.
+        expectations: >
+          Brief free-text description of the study design. Prefer standard tokens:
+          "Randomized controlled trial", "Retrospective cohort", "Prospective cohort",
+          "Case-control", "Case series", "Systematic review", "Meta-analysis".
+          May include additional detail like "multicenter" or "single-arm".
+
+      # -- Evidence grading (if stated) --
       - key: level_of_evidence.level_of_evidence
         type: string|null
         expectations: >
-          Only if explicitly stated in the paper or provided by a predefined framework
-          for this run.
+          Only extract if the paper explicitly states an evidence level using a
+          recognized grading system (e.g., "1a", "2b", "III", "Level II").
+          Do NOT assign or calculate evidence levels - only extract if stated.
       - key: level_of_evidence.grade_of_recommendation
         type: string|null
         expectations: >
-          Only if explicitly stated in the paper or provided by a predefined framework
-          for this run.
+          Only extract if the paper explicitly provides a recommendation grade
+          (e.g., "Grade A", "Strong recommendation", "B").
+          Do NOT assign grades - only extract if the paper states one.
+
+  # =============================================================================
+  # TASK 2: POPULATION DEMOGRAPHICS
+  # =============================================================================
   - name: population
-    description: Population summary fields.
+    description: >
+      Patient/participant demographics. Extract counts and basic demographic data
+      for the study population. IMPORTANT: Count human participants only, not
+      teeth, lesions, jaw sites, or experimental units.
     fields:
       - key: n_pts
         type: integer|null
-        expectations: Total number of human patients/participants (not teeth, lesions, or experiments).
+        expectations: >
+          Total number of human patients or participants enrolled in the study.
+          CRITICAL: Do NOT count teeth, lesions, jaw sites, implants, or other
+          non-human units. For multi-arm studies, sum all arms for total N.
+          If only "cases" are counted (e.g., case series), use that number.
       - key: age_mean_years
         type: number|null
-        expectations: Mean age in years (e.g., 65.4).
+        expectations: >
+          Mean age of participants in years as a decimal number (e.g., 65.4).
+          If only median is reported, leave null unless mean can be inferred.
+          If age is given as a range only (e.g., "45-80 years"), leave null.
       - key: gender_male_n
         type: integer|null
-        expectations: Number of male human participants (not teeth, lesions, or experiments).
+        expectations: >
+          Number of male participants as an integer. Count human participants only.
+          If reported as percentage, calculate from total N if possible,
+          otherwise leave null.
       - key: gender_female_n
         type: integer|null
-        expectations: Number of female human participants (not teeth, lesions, or experiments).
+        expectations: >
+          Number of female participants as an integer. Count human participants only.
+          If reported as percentage, calculate from total N if possible,
+          otherwise leave null.
+
+  # =============================================================================
+  # TASK 3: INDICATION, DRUGS, ROUTE, AND SITE
+  # =============================================================================
   - name: indication_drugs_route_site
-    description: Indication, drugs, route, and site flags (1 if present, null if not mentioned).
-    fields:
-      - key: site_maxilla
-        type: flag
-      - key: site_mandible
-        type: flag
-      - key: site_both
-        type: flag
-      - key: primary_cause_breast_cancer
-        type: flag
-      - key: primary_cause_prostate_cancer
-        type: flag
-      - key: primary_cause_mm
-        type: flag
-        expectations: Multiple myeloma.
-      - key: primary_cause_osteoporosis
-        type: flag
-      - key: primary_cause_other
-        type: flag
-      - key: ards_bisphosphonates_zoledronate
-        type: flag
-      - key: ards_bisphosphonates_pamidronate
-        type: flag
-      - key: ards_bisphosphonates_alendronate
-        type: flag
-      - key: ards_bisphosphonates_risedronate
-        type: flag
-      - key: ards_bisphosphonates_ibandronate
-        type: flag
-      - key: ards_bisphosphonates_etidronate
-        type: flag
-      - key: ards_bisphosphonates_clodronate
-        type: flag
-      - key: ards_bisphosphonates_combination
-        type: flag
-        expectations: Multiple bisphosphonates.
-      - key: ards_bisphosphonates_unknown_other
-        type: flag
-      - key: ards_denosumab
-        type: flag
-      - key: ards_both
-        type: flag
-        expectations: Bisphosphonate + denosumab in study population.
-      - key: route_iv
-        type: flag
-      - key: route_oral
-        type: flag
-      - key: route_im
-        type: flag
-      - key: route_subcutaneous
-        type: flag
-      - key: route_both
-        type: flag
-      - key: route_not_reported
-        type: flag
-        expectations: Use only if route truly not reported.
+    description: >
+      Flags for anatomical site, underlying indication, drug types, and administration
+      routes. All fields are flags: use 1 if explicitly mentioned, null if not.
+      IMPORTANT: For "both" fields, use INSTEAD OF (not in addition to) individual flags.
+    field_groups:
+      # -- Anatomical site of MRONJ --
+      - group: site
+        description: >
+          Where MRONJ occurred or was studied. Use site_both ONLY when the paper
+          explicitly states both locations were affected - do NOT set site_maxilla=1
+          AND site_mandible=1 AND site_both=1 simultaneously.
+        fields:
+          - key: site_maxilla
+            type: flag
+            expectations: >
+              Set to 1 if MRONJ in the maxilla (upper jaw) is explicitly mentioned.
+              Do NOT set if only site_both applies.
+          - key: site_mandible
+            type: flag
+            expectations: >
+              Set to 1 if MRONJ in the mandible (lower jaw) is explicitly mentioned.
+              Do NOT set if only site_both applies.
+          - key: site_both
+            type: flag
+            expectations: >
+              Set to 1 if the paper explicitly reports MRONJ in BOTH maxilla and
+              mandible in the study population. When using site_both=1, do NOT also
+              set site_maxilla=1 or site_mandible=1. Use this for combined reporting.
+
+      # -- Primary indication / underlying condition --
+      - group: primary_cause
+        description: >
+          The underlying condition for which antiresorptive drugs were prescribed.
+          Multiple flags can be set if the study population includes multiple indications.
+        fields:
+          - key: primary_cause_breast_cancer
+            type: flag
+            expectations: >
+              Set to 1 if breast cancer (with bone metastases) is an indication for
+              antiresorptive therapy in the study population.
+          - key: primary_cause_prostate_cancer
+            type: flag
+            expectations: >
+              Set to 1 if prostate cancer (with bone metastases) is an indication for
+              antiresorptive therapy in the study population.
+          - key: primary_cause_mm
+            type: flag
+            expectations: >
+              Set to 1 if multiple myeloma (MM) is an indication for antiresorptive
+              therapy. Look for "multiple myeloma", "myeloma", "MM", or "plasma cell neoplasm".
+          - key: primary_cause_osteoporosis
+            type: flag
+            expectations: >
+              Set to 1 if osteoporosis or osteopenia is the indication.
+              Includes postmenopausal osteoporosis, glucocorticoid-induced osteoporosis.
+          - key: primary_cause_other
+            type: flag
+            expectations: >
+              Set to 1 if another cancer type (lung, renal, thyroid, etc.) or other
+              condition (Paget's disease, osteogenesis imperfecta) is the indication.
+
+      # -- Antiresorptive drugs: Bisphosphonates --
+      - group: ards_bisphosphonates
+        description: >
+          Specific bisphosphonate drugs used. Use brand or generic names to identify.
+          Set ards_bisphosphonates_combination if multiple BPs were used sequentially
+          or concurrently in the same patients.
+        fields:
+          - key: ards_bisphosphonates_zoledronate
+            type: flag
+            expectations: >
+              Zoledronic acid / zoledronate. Brand names: Zometa, Reclast, Aclasta.
+              Most potent IV bisphosphonate, commonly used in oncology.
+          - key: ards_bisphosphonates_pamidronate
+            type: flag
+            expectations: >
+              Pamidronate / pamidronic acid. Brand name: Aredia.
+              IV bisphosphonate, predecessor to zoledronate in oncology.
+          - key: ards_bisphosphonates_alendronate
+            type: flag
+            expectations: >
+              Alendronate / alendronic acid. Brand names: Fosamax, Binosto.
+              Oral bisphosphonate, most common for osteoporosis.
+          - key: ards_bisphosphonates_risedronate
+            type: flag
+            expectations: >
+              Risedronate / risedronic acid. Brand names: Actonel, Atelvia.
+              Oral bisphosphonate for osteoporosis and Paget's disease.
+          - key: ards_bisphosphonates_ibandronate
+            type: flag
+            expectations: >
+              Ibandronate / ibandronic acid. Brand names: Boniva, Bondronat.
+              Available as oral (monthly) or IV formulation.
+          - key: ards_bisphosphonates_etidronate
+            type: flag
+            expectations: >
+              Etidronate / etidronic acid. Brand name: Didronel.
+              First-generation bisphosphonate, less commonly used now.
+          - key: ards_bisphosphonates_clodronate
+            type: flag
+            expectations: >
+              Clodronate / clodronic acid. Brand names: Bonefos, Clasteon.
+              Used in Europe/Canada for bone metastases and myeloma.
+          - key: ards_bisphosphonates_combination
+            type: flag
+            expectations: >
+              Set to 1 if patients received multiple different bisphosphonates
+              (sequentially or switched). E.g., started on pamidronate then switched
+              to zoledronate. Also set the individual drug flags.
+          - key: ards_bisphosphonates_unknown_other
+            type: flag
+            expectations: >
+              Set to 1 if the paper mentions bisphosphonate use but does not specify
+              which drug, OR uses a bisphosphonate not listed above (e.g., tiludronate).
+
+      # -- Antiresorptive drugs: Non-bisphosphonates --
+      - group: ards_other
+        description: >
+          Non-bisphosphonate antiresorptive agents.
+        fields:
+          - key: ards_denosumab
+            type: flag
+            expectations: >
+              Denosumab (RANKL inhibitor). Brand names: Prolia (osteoporosis, 60mg q6mo),
+              Xgeva (oncology, 120mg q4wk). Subcutaneous injection.
+          - key: ards_both
+            type: flag
+            expectations: >
+              Set to 1 if the study population includes patients who received BOTH
+              bisphosphonates AND denosumab (sequentially or concurrently).
+              When set, also set the specific drug flags (e.g., ards_bisphosphonates_zoledronate=1
+              AND ards_denosumab=1 AND ards_both=1).
+
+      # -- Route of administration --
+      - group: route
+        description: >
+          How antiresorptive drugs were administered. Use route_both when multiple
+          routes are reported in the study population. route_not_reported is a fallback
+          only when the paper truly does not specify administration route.
+        fields:
+          - key: route_iv
+            type: flag
+            expectations: >
+              Intravenous administration. Common for zoledronate (Zometa), pamidronate.
+              Look for "IV", "intravenous", "infusion".
+          - key: route_oral
+            type: flag
+            expectations: >
+              Oral administration (tablets/pills). Common for alendronate, risedronate.
+              Look for "oral", "PO", "tablet", "weekly/monthly dosing".
+          - key: route_im
+            type: flag
+            expectations: >
+              Intramuscular injection. Rarely used for bisphosphonates.
+          - key: route_subcutaneous
+            type: flag
+            expectations: >
+              Subcutaneous injection. Standard route for denosumab (Prolia/Xgeva).
+              Look for "SC", "subcutaneous", "subQ".
+          - key: route_both
+            type: flag
+            expectations: >
+              Set to 1 if the study population received drugs via multiple routes
+              (e.g., some patients on IV zoledronate, others on oral alendronate).
+              When using route_both=1, also set the individual route flags that apply.
+          - key: route_not_reported
+            type: flag
+            expectations: >
+              Set to 1 ONLY if the paper mentions antiresorptive drug use but
+              completely fails to specify the administration route. Do NOT use if
+              route can be reasonably inferred from the drug (e.g., denosumab is
+              always subcutaneous).
+
+  # =============================================================================
+  # TASK 4: INTERVENTION AND OUTCOMES
+  # =============================================================================
   - name: intervention_outcomes
-    description: Intervention, follow-up, and outcomes.
-    fields:
-      - key: mronj_stage_at_risk
-        type: integer|null
-        expectations: Count of at-risk human patients/participants.
-      - key: mronj_stage_0
-        type: integer|null
-        expectations: Count of stage 0 human patients/participants.
-      - key: prevention_technique
-        type: string|null
-        expectations: Description of prevention method.
-      - key: group_intervention
-        type: string|null
-        expectations: Description of intervention group.
-      - key: group_control
-        type: string|null
-        expectations: Description of control group.
-      - key: follow_up_mean_months
-        type: number|null
-      - key: follow_up_range
-        type: string|null
-        expectations: Range string (e.g., "6-24 months").
-      - key: outcome_variable
-        type: string|null
-        expectations: Primary outcome.
-      - key: mronj_development
-        type: enum|null
-        allowed:
-          - "Yes"
-          - "No"
-        expectations: Use only if clearly reported; otherwise null.
-      - key: mronj_development_details
-        type: string|null
-        expectations: Counts/definitions if not captured elsewhere.
+    description: >
+      Clinical intervention details, follow-up duration, and MRONJ outcomes.
+      Captures study design elements for comparative studies and outcome data.
+    field_groups:
+      # -- MRONJ staging at baseline --
+      - group: mronj_staging
+        description: >
+          MRONJ staging follows AAOMS position paper criteria (Ruggiero et al.):
+          - At Risk: No apparent necrotic bone, but patient on antiresorptive therapy
+          - Stage 0: No clinical evidence of necrotic bone, but nonspecific symptoms
+            (odontalgia, dull jaw pain, sinus pain) or clinical/radiographic findings
+          - Stage 1-3: Exposed/necrotic bone with increasing severity (not captured here)
+          Count human patients, not jaw sites or lesions.
+        fields:
+          - key: mronj_stage_at_risk
+            type: integer|null
+            expectations: >
+              Number of patients classified as "at risk" for MRONJ at baseline.
+              These are patients on antiresorptive therapy without any signs of
+              osteonecrosis. Often the denominator in incidence studies.
+              Count patients, not teeth or jaw sites.
+          - key: mronj_stage_0
+            type: integer|null
+            expectations: >
+              Number of patients at MRONJ Stage 0 at baseline. Stage 0 patients have
+              no visible necrotic bone but present with nonspecific symptoms (pain,
+              loosening teeth) or radiographic changes (osteosclerosis, thickened
+              lamina dura). Count patients, not lesions.
+
+      # -- Intervention/prevention details --
+      - group: intervention
+        description: >
+          For comparative studies (RCTs, cohort with comparison groups), describe
+          what each group received. For single-arm studies, describe the intervention.
+        fields:
+          - key: prevention_technique
+            type: string|null
+            expectations: >
+              Description of the MRONJ prevention strategy used. Examples:
+              "Dental screening before bisphosphonate initiation",
+              "Drug holiday prior to dental extraction",
+              "Antibiotic prophylaxis with amoxicillin",
+              "Platelet-rich fibrin application after extraction".
+              Be specific but concise.
+          - key: group_intervention
+            type: string|null
+            expectations: >
+              For comparative studies: describe what the intervention/treatment group
+              received. Example: "PRF membrane application + antibiotics post-extraction".
+              For single-arm studies, leave null (use prevention_technique instead).
+          - key: group_control
+            type: string|null
+            expectations: >
+              For comparative studies: describe what the control/comparison group
+              received. Examples: "Standard care without PRF", "No dental screening",
+              "Historical controls from medical records".
+              For single-arm studies, leave null.
+
+      # -- Follow-up duration --
+      - group: follow_up
+        description: >
+          How long patients were followed after intervention or enrollment.
+          Critical for assessing MRONJ development which may be delayed.
+        fields:
+          - key: follow_up_mean_months
+            type: number|null
+            expectations: >
+              Mean follow-up duration in months as a decimal (e.g., 24.5).
+              If reported in years, convert to months (1 year = 12 months).
+              If reported in weeks, convert to months (4.33 weeks = 1 month).
+              If only median is given, leave null unless mean is also stated.
+          - key: follow_up_range
+            type: string|null
+            expectations: >
+              Follow-up duration range as a string. Include units.
+              Examples: "6-24 months", "12-60 months", "1-5 years".
+              Preserve the format used in the paper.
+
+      # -- Outcome measures --
+      - group: outcomes
+        description: >
+          Primary outcome and MRONJ development status.
+        fields:
+          - key: outcome_variable
+            type: string|null
+            expectations: >
+              The primary outcome measured in the study. Examples:
+              "MRONJ incidence", "Time to MRONJ development",
+              "Wound healing rate", "Bone exposure at 8 weeks",
+              "Quality of life (OHIP-14 score)".
+              Use the outcome explicitly stated as primary if available.
+          - key: mronj_development
+            type: enum|null
+            allowed:
+              - "Yes"
+              - "No"
+            expectations: >
+              Did any patients in the study develop MRONJ during follow-up?
+              "Yes" = at least one case of MRONJ developed.
+              "No" = zero MRONJ cases during the study period.
+              Leave null if not clearly reported or if study excluded MRONJ cases.
+          - key: mronj_development_details
+            type: string|null
+            expectations: >
+              Additional details about MRONJ development not captured elsewhere.
+              Include: number of cases, staging distribution, time to development,
+              triggering factors (extraction, implant, spontaneous).
+              Example: "3/125 patients developed MRONJ (2.4%); 2 stage 1, 1 stage 2;
+              all following tooth extraction; mean onset 14 months after extraction".
+
+  # =============================================================================
+  # TASK 5: CRITICAL APPRAISAL (STUDY-TYPE SPECIFIC)
+  # =============================================================================
   - name: critical_appraisal
-    description: Study-type specific appraisal sheet only.
-    fields:
-      - key: appraisal_fields
-        type: mixed
-        expectations: Fill only the appraisal sheet matching the detected study_type.
+    description: >
+      Quality assessment using study-type-specific checklists. The appraisal sheet
+      is selected based on study_type from Task 1. Each question should be answered
+      with: "Yes", "No", "Unclear", or "NA" (not applicable).
+    response_values:
+      - "Yes": The criterion is clearly met based on the paper text.
+      - "No": The criterion is clearly NOT met based on the paper text.
+      - "Unclear": Insufficient information to determine if criterion is met.
+      - "NA": The criterion does not apply to this study design.
+
+    appraisal_checklists:
+      # -- RCT Appraisal (Jadad-like criteria) --
+      - study_type: rct
+        description: Quality assessment for Randomized Controlled Trials.
+        fields:
+          - key: q1_randomized
+            question: Was the study described as randomized?
+            expectations: >
+              Look for explicit statement that participants were "randomized" or
+              "randomly assigned" to groups. Terms like "random allocation" count.
+          - key: q2_randomization_method
+            question: Was the method of randomization appropriate?
+            expectations: >
+              Look for description of HOW randomization was done: computer-generated
+              random numbers, random number table, coin flip, sealed envelopes.
+              Inappropriate: alternation, date of birth, hospital number.
+          - key: q3_double_blind
+            question: Was the study described as double-blind?
+            expectations: >
+              Both participants AND investigators/assessors were blinded to
+              group assignment. Look for "double-blind" or "double-masked".
+          - key: q4_blinding_method
+            question: Was the method of blinding appropriate?
+            expectations: >
+              For drug trials: identical placebo, matching packaging.
+              For procedures: sham procedure, blinded outcome assessors.
+              Describe how blinding was achieved if stated.
+          - key: q5_withdrawals_dropouts
+            question: Were withdrawals and dropouts described?
+            expectations: >
+              Paper should state: number of withdrawals/dropouts per group,
+              reasons for withdrawal, and how missing data was handled (ITT, per-protocol).
+
+      # -- Cohort Study Appraisal --
+      - study_type: cohort
+        description: Quality assessment for Cohort Studies (prospective or retrospective).
+        fields:
+          - key: q1_groups_similar
+            question: Were the two groups similar and recruited from the same population?
+            expectations: >
+              Exposed and unexposed groups should come from comparable source
+              populations with similar baseline characteristics.
+          - key: q2_exposures_measured_similarly
+            question: Were the exposures measured similarly to assign people to groups?
+            expectations: >
+              Same methods/definitions used to classify exposure status in both groups.
+          - key: q3_exposure_valid_reliable
+            question: Was the exposure measured in a valid and reliable way?
+            expectations: >
+              Look for validated instruments, medical records, pharmacy databases.
+              Self-report alone may be less reliable.
+          - key: q4_confounders_identified
+            question: Were confounding factors identified?
+            expectations: >
+              Paper should list potential confounders (age, comorbidities, drug dose,
+              dental status, etc.) that could affect the outcome.
+          - key: q5_confounders_addressed
+            question: Were strategies to address confounding factors stated?
+            expectations: >
+              Methods: matching, stratification, multivariable regression, propensity
+              scores. Simply acknowledging confounders is not sufficient.
+          - key: q6_free_of_outcome_at_start
+            question: Were participants free of the outcome at the start?
+            expectations: >
+              For MRONJ studies: patients should not have MRONJ at baseline.
+              Prevalent cases should be excluded.
+          - key: q7_outcomes_valid_reliable
+            question: Were outcomes measured in a valid and reliable way?
+            expectations: >
+              MRONJ diagnosis should use established criteria (AAOMS, ASBMR).
+              Clinical + radiographic confirmation is more reliable.
+          - key: q8_followup_sufficient
+            question: Was follow-up time sufficient for outcomes to occur?
+            expectations: >
+              MRONJ may take months to years to develop. Minimum 6-12 months
+              follow-up generally expected; longer is better.
+          - key: q9_followup_complete
+            question: Was follow-up complete, and if not, were reasons explored?
+            expectations: >
+              High retention rate (>80%). Reasons for loss to follow-up should
+              be documented and compared between groups.
+          - key: q10_address_incomplete_followup
+            question: Were strategies to address incomplete follow-up utilized?
+            expectations: >
+              Sensitivity analyses, multiple imputation, or assessment of whether
+              lost participants differed from completers.
+          - key: q11_appropriate_statistics
+            question: Was appropriate statistical analysis used?
+            expectations: >
+              Survival analysis (Kaplan-Meier, Cox regression) for time-to-event.
+              Adjustment for confounders in multivariable models.
+
+      # -- Case Series Appraisal --
+      - study_type: case_series
+        description: Quality assessment for Case Series.
+        fields:
+          - key: q1_inclusion_criteria_clear
+            question: Were there clear criteria for inclusion in the case series?
+            expectations: >
+              Explicit inclusion/exclusion criteria should be stated.
+          - key: q2_condition_measured_standard
+            question: Was the condition measured in a standard, reliable way?
+            expectations: >
+              MRONJ diagnosis using recognized criteria (AAOMS definition).
+          - key: q3_valid_identification_methods
+            question: Were valid methods used for identification of the condition?
+            expectations: >
+              Clinical examination + imaging. Histopathology if available.
+          - key: q4_consecutive_inclusion
+            question: Did the case series have consecutive inclusion of participants?
+            expectations: >
+              All eligible patients in the timeframe included (not cherry-picked).
+          - key: q5_complete_inclusion
+            question: Did the case series have complete inclusion of participants?
+            expectations: >
+              No unexplained gaps in case collection.
+          - key: q6_demographics_reported
+            question: Was there clear reporting of participant demographics?
+            expectations: >
+              Age, sex, and relevant baseline characteristics reported.
+          - key: q7_clinical_info_reported
+            question: Was there clear reporting of clinical information?
+            expectations: >
+              Drug type, dose, duration, indication, and dental history reported.
+          - key: q8_outcomes_followup_reported
+            question: Were outcomes or follow-up results clearly reported?
+            expectations: >
+              MRONJ staging, treatment outcomes, resolution rates reported.
+          - key: q9_presenting_site_reported
+            question: Was there clear reporting of presenting site demographics?
+            expectations: >
+              Anatomical location (mandible/maxilla), lesion characteristics.
+          - key: q10_statistics_appropriate
+            question: Was statistical analysis appropriate?
+            expectations: >
+              Descriptive statistics appropriate for case series. No causal claims.
+
+      # -- Case-Control Study Appraisal --
+      - study_type: case_control
+        description: Quality assessment for Case-Control Studies.
+        fields:
+          - key: q1_groups_comparable
+            question: Were the groups comparable other than the presence of disease?
+            expectations: >
+              Cases and controls should be similar in age, sex, and relevant factors.
+          - key: q2_matched_appropriately
+            question: Were cases and controls matched appropriately?
+            expectations: >
+              If matched design, appropriate variables selected (age, sex, drug exposure).
+          - key: q3_same_criteria_cases_controls
+            question: Were the same criteria used for identification of cases and controls?
+            expectations: >
+              Consistent definitions and data sources for both groups.
+          - key: q4_exposure_valid_reliable
+            question: Was exposure measured in a valid and reliable way?
+            expectations: >
+              Drug exposure verified from medical/pharmacy records, not just self-report.
+          - key: q5_exposure_measured_same_way
+            question: Was exposure measured in the same way for cases and controls?
+            expectations: >
+              Same data sources and methods for exposure assessment in both groups.
+          - key: q6_confounders_identified
+            question: Were confounding factors identified?
+            expectations: >
+              Key confounders listed (dental procedures, comorbidities, drug duration).
+          - key: q7_confounders_addressed
+            question: Were strategies to address confounding factors stated?
+            expectations: >
+              Matching, stratification, or adjustment in analysis.
+          - key: q8_outcomes_assessed_standard
+            question: Were outcomes assessed in a standard, reliable way?
+            expectations: >
+              MRONJ diagnosis based on established clinical criteria.
+          - key: q9_exposure_period_long_enough
+            question: Was the exposure period of interest long enough?
+            expectations: >
+              Drug exposure history should capture relevant timeframe for MRONJ risk.
+          - key: q10_appropriate_statistics
+            question: Was appropriate statistical analysis used?
+            expectations: >
+              Odds ratios with confidence intervals. Conditional logistic regression
+              for matched designs.
+
+      # -- Systematic Review Appraisal (AMSTAR-like) --
+      - study_type: systematic_review
+        description: Quality assessment for Systematic Reviews and Meta-analyses.
+        fields:
+          - key: q1_pico
+            question: Did the research question include PICO components?
+            expectations: >
+              Population, Intervention/Exposure, Comparator, and Outcome clearly defined.
+          - key: q2_protocol_predefined
+            question: Was the review protocol established prior to the review?
+            expectations: >
+              Registration (PROSPERO) or published protocol mentioned.
+          - key: q3_designs_explained
+            question: Did the authors explain their selection of study designs?
+            expectations: >
+              Rationale for including specific study types (RCTs only, or observational).
+          - key: q4_6_search_and_duplicates
+            question: Was a comprehensive search strategy used?
+            expectations: >
+              Multiple databases (PubMed, Embase, Cochrane), reference checking,
+              gray literature. Duplicate screening by 2+ reviewers.
+          - key: q7_excluded_list
+            question: Did the authors provide a list of excluded studies with reasons?
+            expectations: >
+              Excluded studies listed with specific exclusion reasons.
+          - key: q8_included_described
+            question: Were included studies described in adequate detail?
+            expectations: >
+              Characteristics table with population, exposure, outcomes, design.
+          - key: q9_risk_of_bias
+            question: Was risk of bias of included studies assessed?
+            expectations: >
+              Validated tool used (Cochrane RoB, Newcastle-Ottawa, JBI).
+          - key: q10_funding_sources
+            question: Did the authors report funding sources for included studies?
+            expectations: >
+              Funding/conflicts of interest of primary studies reported.
+          - key: q11_meta_analysis_methods
+            question: Were appropriate methods used for meta-analysis (if performed)?
+            expectations: >
+              Appropriate pooling method, heterogeneity assessment (I2, Q statistic).
+          - key: q12_impact_of_rob
+            question: Did the authors assess the potential impact of risk of bias?
+            expectations: >
+              Sensitivity analysis excluding high-risk studies, or narrative synthesis.
+          - key: q13_account_for_rob
+            question: Did the authors account for risk of bias in interpreting results?
+            expectations: >
+              Conclusions tempered by quality of evidence.
+          - key: q14_heterogeneity_explained
+            question: Did the authors provide a satisfactory explanation for heterogeneity?
+            expectations: >
+              Subgroup analyses, meta-regression, or narrative discussion of variability.
+          - key: q15_publication_bias
+            question: Was publication bias assessed (if meta-analysis performed)?
+            expectations: >
+              Funnel plots, Egger's test, or other methods for >10 studies.
+          - key: q16_conflicts_reported
+            question: Did the authors report any potential conflicts of interest?
+            expectations: >
+              Conflict of interest statement for review authors.
+
 verifier_context:
   note: >
     The verifier receives the full-text view and decision list; evidence should be concise
