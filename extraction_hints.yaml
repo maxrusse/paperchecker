@@ -11,7 +11,8 @@ global_rules:
   - Evidence must be short (1 sentence), no long quotes.
   - If a page number can be inferred from a snippet header (e.g., "--- PAGE 3"), include that page.
   - Return strict JSON matching the schema.
-  - Keep values structured: numbers as numbers (not strings), enums/tokens exactly as defined,
+  - >
+    Keep values structured: numbers as numbers (not strings), enums/tokens exactly as defined,
     and free-text fields concise.
 frameworks:
   awmf_s3_alignment:
