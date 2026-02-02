@@ -9,10 +9,10 @@
 # - Writes values that match the Excel template data-validations (e.g., "Yes/No/Unclear/Not Applicable", "+1/-1/0" where expected).
 #
 # Dependencies:
-#   pip install -U openai google-genai pymupdf python-docx openpyxl jsonschema
+#   pip install -U openai PyYAML pymupdf python-docx openpyxl jsonschema
 #
 # Notes:
-# - Configure OPENAI_API_KEY and GOOGLE_API_KEY via env vars or pass to run_pipeline().
+# - Configure OPENAI_API_KEY via env vars or pass to run_pipeline().
 # - The template is expected to already exist at TEMPLATE_XLSX.
 #
 # Caveat:
@@ -30,10 +30,9 @@ import fitz  # PyMuPDF
 import openpyxl
 from openpyxl.styles import PatternFill
 from docx import Document
+import yaml
 
 from openai import OpenAI
-from google import genai
-from google.genai import types
 from paperchecker_utils import (
     dedupe_decisions,
     extract_page_from_evidence,
@@ -55,19 +54,16 @@ PDF_PATHS = [
 TEMPLATE_XLSX = None  # Auto-generated from EXCEL_MAP structure (set path to use custom template)
 OUT_XLSX = f"output/mronj_extraction_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.xlsx"
 OUT_DOCX = f"output/mronj_review_log_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.docx"
+EXTRACTION_HINTS_PATH = "extraction_hints.yaml"
 
 # Models (keep as placeholders; set to models you have access to)
-OPENAI_EXTRACT_MODEL = "gpt-5.2"
-OPENAI_VERIFIER_MODEL = "gpt-5.2"
-GEMINI_EXTRACT_MODEL = "gemini-3-pro-preview"
-GEMINI_VERIFIER_MODEL = "gemini-3-pro-preview"
+OPENAI_EXTRACT_MODEL = "gpt-5.2"  # gpt-5.2 | gpt-5.1
+OPENAI_VERIFIER_MODEL = "gpt-5.2"  # gpt-5.2 | gpt-5.1
 
 REASONING_EFFORT_OPENAI = "medium"   # none|low|medium|high|xhigh
-THINKING_LEVEL_GEMINI = "low"        # minimal|low|high
 
 # Verifier-specific reasoning (lower = faster, still accurate for verification)
 VERIFIER_REASONING_EFFORT_OPENAI = "low"  # none|low|medium|high|xhigh
-VERIFIER_THINKING_LEVEL_GEMINI = "low"  # low|medium|high (minimal not supported)
 
 MAX_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
 TASK_VIEW_CHARS = 500000  # Increased - modern LLMs support large context
@@ -1433,6 +1429,8 @@ VERIFIER_SCHEMA = {
 TASK_SYSTEM = (
     "You extract structured evidence from a single MRONJ prevention paper.\n"
     "Use ONLY the provided text. Do not guess.\n"
+    "Be critical and conservative: if a value is ambiguous, incomplete, or not explicitly stated, return null.\n"
+    "Prefer detailed, specific extraction only when the text clearly supports it.\n"
     "If not reported, return null.\n"
     "For 1/0 flag fields: use 1 when explicitly present, otherwise null.\n"
     "Evidence must be short (1 sentence). No long quotes.\n"
@@ -1452,7 +1450,52 @@ VERIFIER_SYSTEM = (
     "Return strict JSON matching the schema.\n"
 )
 
+def _load_extraction_hints():
+    if not EXTRACTION_HINTS_PATH:
+        return {}
+    if not os.path.exists(EXTRACTION_HINTS_PATH):
+        return {}
+    with open(EXTRACTION_HINTS_PATH, "r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle) or {}
+
+def _format_task_hints(task_name, hints):
+    if not hints:
+        return ""
+    global_rules = hints.get("global_rules") or []
+    tasks = hints.get("tasks") or []
+    match = None
+    for task in tasks:
+        if task.get("name") == task_name:
+            match = task
+            break
+    if match is None and task_name.startswith("critical_appraisal"):
+        match = next((task for task in tasks if task.get("name") == "critical_appraisal"), None)
+    lines = []
+    if global_rules:
+        lines.append("GLOBAL_RULES:")
+        lines.extend([f"- {rule}" for rule in global_rules])
+    if match:
+        lines.append(f"TASK_EXPECTATIONS: {match.get('description','')}".strip())
+        for field in match.get("fields") or []:
+            key = field.get("key")
+            ftype = field.get("type")
+            expectations = field.get("expectations")
+            allowed = field.get("allowed")
+            entry = f"- {key}"
+            if ftype:
+                entry += f" ({ftype})"
+            if expectations:
+                entry += f": {expectations}"
+            lines.append(entry)
+            if allowed:
+                lines.append(f"  allowed: {', '.join(str(item) for item in allowed)}")
+    if not lines:
+        return ""
+    return "\nEXTRACTION_HINTS:\n" + "\n".join(lines) + "\n"
+
 def _task_user(task_name, allowed_fields_text, view_text, context_json=None):
+    hints = _load_extraction_hints()
+    hints_text = _format_task_hints(task_name, hints)
     ctx = ""
     if context_json is not None:
         ctx = "\n\nCONTEXT_JSON (already extracted; do not change unrelated fields):\n" + json.dumps(context_json, ensure_ascii=True)
@@ -1460,6 +1503,7 @@ def _task_user(task_name, allowed_fields_text, view_text, context_json=None):
         f"TASK_NAME: {task_name}\n"
         f"FIELDS_TO_FILL:\n{allowed_fields_text}\n\n"
         f"PAPER_TEXT (TASK VIEW):\n{view_text}\n"
+        + hints_text
         + ctx
     )
 
@@ -1495,22 +1539,6 @@ def openai_json(oai_client, system_text, user_text, schema, schema_name):
         return json.loads(resp.output_text)
     return _call_with_retries(_call, f"OpenAI call ({schema_name})")
 
-def gemini_json(gclient, system_text, user_text, schema):
-    def _call():
-        resp = gclient.models.generate_content(
-            model=GEMINI_EXTRACT_MODEL,
-            contents=user_text,
-            config=types.GenerateContentConfig(
-                system_instruction=system_text,
-                response_mime_type="application/json",
-                response_json_schema=schema,
-                thinking_config=types.ThinkingConfig(thinking_level=THINKING_LEVEL_GEMINI),
-                temperature=0.0,
-            ),
-        )
-        return json.loads(resp.text)
-    return _call_with_retries(_call, "Gemini call")
-
 
 # Verifier-specific LLM functions (use lower reasoning for faster verification)
 def openai_json_verifier(oai_client, system_text, user_text, schema, schema_name):
@@ -1526,23 +1554,6 @@ def openai_json_verifier(oai_client, system_text, user_text, schema, schema_name
         )
         return json.loads(resp.output_text)
     return _call_with_retries(_call, f"OpenAI verifier ({schema_name})")
-
-
-def gemini_json_verifier(gclient, system_text, user_text, schema):
-    def _call():
-        resp = gclient.models.generate_content(
-            model=GEMINI_VERIFIER_MODEL,
-            contents=user_text,
-            config=types.GenerateContentConfig(
-                system_instruction=system_text,
-                response_mime_type="application/json",
-                response_json_schema=schema,
-                thinking_config=types.ThinkingConfig(thinking_level=VERIFIER_THINKING_LEVEL_GEMINI),
-                temperature=0.0,
-            ),
-        )
-        return json.loads(resp.text)
-    return _call_with_retries(_call, "Gemini verifier")
 
 
 # -------------------------
@@ -1677,17 +1688,6 @@ def rule_validation(final_obj):
 # -------------------------
 # VERIFIER (reviews only non-null decisions)
 # -------------------------
-def gemini_verify_chunk(gclient, view_text, driver_json, decisions_to_review):
-    user_text = (
-        "PAPER_TEXT (VIEW):\n"
-        + view_text
-        + "\n\nDRIVER_JSON (context):\n"
-        + json.dumps(driver_json, ensure_ascii=True)
-        + "\n\nDECISIONS_TO_REVIEW:\n"
-        + json.dumps(decisions_to_review, ensure_ascii=True)
-    )
-    return gemini_json_verifier(gclient, VERIFIER_SYSTEM, user_text, VERIFIER_SCHEMA)
-
 def openai_verify_chunk(oai_client, view_text, driver_json, decisions_to_review):
     user_text = (
         "PAPER_TEXT (VIEW):\n"
@@ -2024,13 +2024,10 @@ def lookup_pmid_via_pubmed(title: Optional[str], doi: Optional[str]) -> Optional
 def run_pipeline_for_pdf(
     pdf_path,
     oai_client,
-    gclient,
     template_xlsx,
     out_xlsx,
     out_docx,
     progress_fn=print,
-    use_gemini_driver=False,
-    use_openai_verifier=False,
     clear_existing_data=False,
 ):
     _progress(progress_fn, f"Starting PDF: {pdf_path}")
@@ -2044,15 +2041,12 @@ def run_pipeline_for_pdf(
             + f"title={paper_id_hint.get('title') or 'N/A'}",
         )
 
-    verifier_fn = openai_verify_chunk if use_openai_verifier else gemini_verify_chunk
-    verifier_model = OPENAI_VERIFIER_MODEL if use_openai_verifier else GEMINI_VERIFIER_MODEL
+    verifier_fn = openai_verify_chunk
+    verifier_model = OPENAI_VERIFIER_MODEL
 
     def run_driver(task_name, schema, user_prompt, schema_name):
         """Run extraction for a task."""
-        if use_gemini_driver:
-            return gemini_json(gclient, TASK_SYSTEM, user_prompt, schema)
-        else:
-            return openai_json(oai_client, TASK_SYSTEM, user_prompt, schema, schema_name)
+        return openai_json(oai_client, TASK_SYSTEM, user_prompt, schema, schema_name)
 
     def verify_decisions(task_result, working_snapshot):
         """Verify decisions from a single task result immediately."""
@@ -2066,12 +2060,7 @@ def run_pipeline_for_pdf(
 
         for ch in chunks:
             verifier_view = build_verifier_view(full_pages, ch)
-            vpass = verifier_fn(
-                oai_client if use_openai_verifier else gclient,
-                verifier_view,
-                working_json,
-                ch,
-            )
+            vpass = verifier_fn(oai_client, verifier_view, working_json, ch)
             verifier_passes.append(vpass)
         return verifier_passes
 
@@ -2435,10 +2424,7 @@ def run_pipeline(
     out_xlsx=OUT_XLSX,
     out_docx=OUT_DOCX,
     openai_api_key=None,
-    google_api_key=None,
     progress_fn=print,
-    use_gemini_driver=False,
-    use_openai_verifier=False,
     skip_existing_evals=True,
     processed_state_path=None,
 ):
@@ -2450,14 +2436,10 @@ def run_pipeline(
     _progress(progress_fn, f"Using template: {actual_template}")
 
     openai_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-    google_key = google_api_key or os.getenv("GOOGLE_API_KEY")
     if not openai_key:
         raise RuntimeError("Missing OPENAI_API_KEY.")
-    if not google_key:
-        raise RuntimeError("Missing GOOGLE_API_KEY.")
 
     oai_client = OpenAI(api_key=openai_key)
-    gclient = genai.Client(api_key=google_key)
 
     def load_processed_state(state_path):
         if not state_path or not os.path.exists(state_path):
@@ -2500,13 +2482,10 @@ def run_pipeline(
         final_obj = run_pipeline_for_pdf(
             pdf_path=pdf,
             oai_client=oai_client,
-            gclient=gclient,
             template_xlsx=current_template,
             out_xlsx=out_xlsx,
             out_docx=out_docx,
             progress_fn=progress_fn,
-            use_gemini_driver=use_gemini_driver,
-            use_openai_verifier=use_openai_verifier,
             clear_existing_data=is_first_pdf,
         )
         current_template = out_xlsx

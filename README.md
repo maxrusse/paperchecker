@@ -12,7 +12,7 @@ PaperChecker automates the extraction of structured data from medical research p
 - Extracts data from PDF research papers into a structured Excel format
 - Multi-round extraction reduces hallucinations (metadata, population, drugs, interventions, appraisal)
 - Verification pass reviews all non-null decisions
-- Supports OpenAI and Google Gemini models
+- Supports OpenAI models
 - Generates audit trails and review logs
 - Optional PubMed lookup for missing PMIDs
 
@@ -21,7 +21,6 @@ PaperChecker automates the extraction of structured data from medical research p
 1. Click the **Open in Colab** badge above
 2. Add your API keys to Colab Secrets:
    - `OPENAI_API_KEY`
-   - `GOOGLE_API_KEY`
 3. Upload your PDF files
 4. Run the pipeline and download results
 
@@ -37,7 +36,6 @@ pip install -r requirements.txt
 
 # Set API keys
 export OPENAI_API_KEY="your-key"
-export GOOGLE_API_KEY="your-key"
 
 # Optional PubMed lookup
 export PUBMED_API_KEY="your-key"
@@ -88,14 +86,10 @@ Edit `script.py` to customize:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `OPENAI_EXTRACT_MODEL` | `gpt-5.2` | OpenAI model for extraction |
-| `OPENAI_VERIFIER_MODEL` | `gpt-5.2` | OpenAI model for verification |
-| `GEMINI_EXTRACT_MODEL` | `gemini-3-pro-preview` | Google model for extraction |
-| `GEMINI_VERIFIER_MODEL` | `gemini-3-pro-preview` | Google model for verification |
+| `OPENAI_EXTRACT_MODEL` | `gpt-5.2` | OpenAI model for extraction (`gpt-5.2` or `gpt-5.1`) |
+| `OPENAI_VERIFIER_MODEL` | `gpt-5.2` | OpenAI model for verification (`gpt-5.2` or `gpt-5.1`) |
 | `REASONING_EFFORT_OPENAI` | `medium` | Reasoning effort for OpenAI extraction |
 | `VERIFIER_REASONING_EFFORT_OPENAI` | `low` | Reasoning effort for OpenAI verification |
-| `THINKING_LEVEL_GEMINI` | `low` | Thinking level for Gemini extraction |
-| `VERIFIER_THINKING_LEVEL_GEMINI` | `low` | Thinking level for Gemini verification |
 | `ENABLE_PUBMED_LOOKUP` | `True` | Auto-fetch missing PMIDs |
 
 ## Outputs
@@ -112,13 +106,12 @@ See [docs.md](docs.md) for detailed technical documentation including:
 - Critical appraisal checklist specifications
 - LLM task design rationale
 
-See [extraction_hints.md](extraction_hints.md) for field-level extraction rules and expectations.
+See [extraction_hints.yaml](extraction_hints.yaml) for field-level extraction rules and expectations.
 
 ## Requirements
 
 - Python 3.9+
 - OpenAI API key (for extraction)
-- Google API key (for verification)
 - Optional PubMed API key + email (for PMID lookup)
 
 ## License

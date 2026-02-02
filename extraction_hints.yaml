@@ -1,0 +1,188 @@
+version: 1
+title: Extraction hints by feature/item
+summary: >
+  Structured, single-source extraction rules for humans and the LLM. Use ONLY the
+  provided paper text; do not guess. Prefer explicit statements. Return null when
+  ambiguous or not reported.
+global_rules:
+  - Use ONLY the provided text; do not guess.
+  - If not reported, return null.
+  - For 1/0 flag fields: use 1 when explicitly present, otherwise null.
+  - Evidence must be short (1 sentence), no long quotes.
+  - If a page number can be inferred from a snippet header (e.g., "--- PAGE 3"), include that page.
+  - Return strict JSON matching the schema.
+  - Keep values structured: numbers as numbers (not strings), enums/tokens exactly as defined,
+    and free-text fields concise.
+frameworks:
+  awmf_s3_alignment:
+    purpose: >
+      This extraction output is an input artifact for an AWMF S3 guideline workflow.
+      It does NOT replace evidence synthesis, GRADE profiling, or recommendations.
+    required_next_layer:
+      - Define PICO and outcome prioritization.
+      - Perform evidence synthesis (effect sizes, meta-analysis, heterogeneity, bias checks).
+      - Build evidence profiles (often GRADE) and summary-of-findings tables.
+      - Document evidence-to-decision and consensus/recommendation process.
+    usage_notes:
+      - Only populate level_of_evidence or grade_of_recommendation if explicitly stated
+        or if the run provides a predefined framework mapping.
+      - Use study_design tokens that match the Excel template validations whenever possible.
+tasks:
+  - name: meta_design
+    description: Meta + design identification fields.
+    fields:
+      - key: paper_id.doi
+        type: string|null
+        expectations: DOI from paper header/abstract when explicitly stated.
+      - key: paper_id.title
+        type: string|null
+        expectations: Paper title from header/abstract when explicitly stated.
+      - key: paper_id.pmid
+        type: null
+        expectations: Leave null; resolved via PubMed.
+      - key: study_type
+        type: enum
+        allowed:
+          - RCT
+          - Retrospective Cohort
+          - Prospective Cohort
+          - Case-Control
+          - Retrospective Case-Series
+          - Prospective Case Series
+          - Systematic Review
+          - Metaanalysis
+        expectations: MUST be one of the allowed values.
+      - key: included_articles.author
+        type: string|null
+        expectations: First author surname (e.g., "Smith").
+      - key: included_articles.year
+        type: integer|null
+        expectations: Publication year as integer.
+      - key: included_articles.study_design
+        type: string|null
+        expectations: Brief description; match template tokens when possible.
+      - key: level_of_evidence.level_of_evidence
+        type: string|null
+        expectations: >
+          Only if explicitly stated in the paper or provided by a predefined framework
+          for this run.
+      - key: level_of_evidence.grade_of_recommendation
+        type: string|null
+        expectations: >
+          Only if explicitly stated in the paper or provided by a predefined framework
+          for this run.
+  - name: population
+    description: Population summary fields.
+    fields:
+      - key: n_pts
+        type: integer|null
+        expectations: Total number of patients/participants.
+      - key: age_mean_years
+        type: number|null
+        expectations: Mean age in years (e.g., 65.4).
+      - key: gender_male_n
+        type: integer|null
+        expectations: Number of male participants.
+      - key: gender_female_n
+        type: integer|null
+        expectations: Number of female participants.
+  - name: indication_drugs_route_site
+    description: Indication, drugs, route, and site flags (1 if present, null if not mentioned).
+    fields:
+      - key: site_maxilla
+        type: flag
+      - key: site_mandible
+        type: flag
+      - key: site_both
+        type: flag
+      - key: primary_cause_breast_cancer
+        type: flag
+      - key: primary_cause_prostate_cancer
+        type: flag
+      - key: primary_cause_mm
+        type: flag
+        expectations: Multiple myeloma.
+      - key: primary_cause_osteoporosis
+        type: flag
+      - key: primary_cause_other
+        type: flag
+      - key: ards_bisphosphonates_zoledronate
+        type: flag
+      - key: ards_bisphosphonates_pamidronate
+        type: flag
+      - key: ards_bisphosphonates_alendronate
+        type: flag
+      - key: ards_bisphosphonates_risedronate
+        type: flag
+      - key: ards_bisphosphonates_ibandronate
+        type: flag
+      - key: ards_bisphosphonates_etidronate
+        type: flag
+      - key: ards_bisphosphonates_clodronate
+        type: flag
+      - key: ards_bisphosphonates_combination
+        type: flag
+        expectations: Multiple bisphosphonates.
+      - key: ards_bisphosphonates_unknown_other
+        type: flag
+      - key: ards_denosumab
+        type: flag
+      - key: ards_both
+        type: flag
+        expectations: Bisphosphonate + denosumab in study population.
+      - key: route_iv
+        type: flag
+      - key: route_oral
+        type: flag
+      - key: route_im
+        type: flag
+      - key: route_subcutaneous
+        type: flag
+      - key: route_both
+        type: flag
+      - key: route_not_reported
+        type: flag
+        expectations: Use only if route truly not reported.
+  - name: intervention_outcomes
+    description: Intervention, follow-up, and outcomes.
+    fields:
+      - key: mronj_stage_at_risk
+        type: integer|null
+      - key: mronj_stage_0
+        type: integer|null
+      - key: prevention_technique
+        type: string|null
+        expectations: Description of prevention method.
+      - key: group_intervention
+        type: string|null
+        expectations: Description of intervention group.
+      - key: group_control
+        type: string|null
+        expectations: Description of control group.
+      - key: follow_up_mean_months
+        type: number|null
+      - key: follow_up_range
+        type: string|null
+        expectations: Range string (e.g., "6-24 months").
+      - key: outcome_variable
+        type: string|null
+        expectations: Primary outcome.
+      - key: mronj_development
+        type: enum|null
+        allowed:
+          - "Yes"
+          - "No"
+        expectations: Use only if clearly reported; otherwise null.
+      - key: mronj_development_details
+        type: string|null
+        expectations: Counts/definitions if not captured elsewhere.
+  - name: critical_appraisal
+    description: Study-type specific appraisal sheet only.
+    fields:
+      - key: appraisal_fields
+        type: mixed
+        expectations: Fill only the appraisal sheet matching the detected study_type.
+verifier_context:
+  note: >
+    The verifier receives the full-text view and decision list; evidence should be concise
+    and anchored to the paper text. The verifier checks only non-null decisions.
