@@ -76,16 +76,16 @@ tasks:
     fields:
       - key: n_pts
         type: integer|null
-        expectations: Total number of patients/participants.
+        expectations: Total number of human patients/participants (not teeth, lesions, or experiments).
       - key: age_mean_years
         type: number|null
         expectations: Mean age in years (e.g., 65.4).
       - key: gender_male_n
         type: integer|null
-        expectations: Number of male participants.
+        expectations: Number of male human participants (not teeth, lesions, or experiments).
       - key: gender_female_n
         type: integer|null
-        expectations: Number of female participants.
+        expectations: Number of female human participants (not teeth, lesions, or experiments).
   - name: indication_drugs_route_site
     description: Indication, drugs, route, and site flags (1 if present, null if not mentioned).
     fields:
@@ -148,8 +148,10 @@ tasks:
     fields:
       - key: mronj_stage_at_risk
         type: integer|null
+        expectations: Count of at-risk human patients/participants.
       - key: mronj_stage_0
         type: integer|null
+        expectations: Count of stage 0 human patients/participants.
       - key: prevention_technique
         type: string|null
         expectations: Description of prevention method.
