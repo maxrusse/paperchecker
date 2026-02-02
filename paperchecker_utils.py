@@ -12,11 +12,21 @@ def normalize_string(value: Any) -> Any:
     return stripped if stripped != "" else None
 
 
+ILLEGAL_EXCEL_CHARS_RE = re.compile(r"[\000-\010]|[\013-\014]|[\016-\037]")
+
+
+def sanitize_excel_string(value: str) -> str:
+    return ILLEGAL_EXCEL_CHARS_RE.sub("", value)
+
+
 def normalize_excel_value(value: Any) -> Any:
     if isinstance(value, bool):
         return 1 if value else 0
     if isinstance(value, str):
-        return normalize_string(value)
+        normalized = normalize_string(value)
+        if normalized is None:
+            return None
+        return sanitize_excel_string(normalized)
     return value
 
 
